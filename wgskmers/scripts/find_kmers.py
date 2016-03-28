@@ -1,6 +1,6 @@
 """Script to find all k-mers in a FASTA file beginnig with a query sequence
 
-By default, the script will output a sorted list of all kmers found.
+By default, the script will output a sorted list of all k-mers found.
 """
 
 import os
@@ -238,15 +238,15 @@ parser.add_argument('-k', '--k', type=int, default=default_k,
 parser.add_argument('-q', '--query', type=str, default=default_query,
 	help='Target sequence to find (default {})'.format(default_query))
 parser.add_argument('-t', '--threshold', type=int, required=False,
-	help='Filter kmers containing PHRED scores over this value')
+	help='Filter k-mers containing PHRED scores over this value')
 
 output_group = parser.add_mutually_exclusive_group()
 output_group.add_argument('-c', '--count', action='store_true',
-	help='Write number of occurrances of each kmer in ouput')
+	help='Write number of occurrences of each k-mer in ouput')
 output_group.add_argument('-H', '--hist', action='store_true',
 	help='Output histogram of counts')
 output_group.add_argument('-B', '--bool', action='store_true',
-	help='Output boolean vector, one 0/1 byte per possible kmer')
+	help='Output boolean vector, one 0/1 byte per possible k-mer ordered alphabetically')
 
 parser.add_argument('-f', '--format', type=str, required=False,
 	choices=['fasta', 'fastq', 'fastq-sanger', 'fastq-solexa',
@@ -255,7 +255,7 @@ parser.add_argument('-f', '--format', type=str, required=False,
 	     'from extension of first file encountered.')
 
 parser.add_argument('-b', '--batch', action='store_true',
-	help='Run in match mode. Will process each file in directory given by '
+	help='Run in batch mode. Will process each file in directory given by '
 	     '"src" argument, writing output to directory given by "dest".')
 
 parser.add_argument('--debug', action='store_true', help='Print debug messages')
@@ -265,7 +265,7 @@ parser.add_argument('-o', '--overwrite', action='store_true',
 parser.add_argument('src', type=str,
 	help='FASTA file to read from, or directory of files in batch mode')
 parser.add_argument('dest', type=str, nargs='?',
-	help='File or directory to write output to. If ommited will write to stdout')
+	help='File or directory to write output to. If omitted will write to stdout')
 
 
 def main(args=None):
