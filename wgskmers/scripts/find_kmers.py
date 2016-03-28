@@ -1,9 +1,13 @@
-"""Script to find all k-mers in a FASTA file beginnig with a query sequence"""
+"""Script to find all k-mers in a FASTA file beginnig with a query sequence
+
+By default, the script will output a sorted list of all kmers found.
+"""
 
 import os
 import sys
 import argparse
 import logging
+from collections import Counter
 
 from Bio import SeqIO as seqio
 
@@ -13,10 +17,21 @@ logger = logging.getLogger()
 
 
 nucs = set('ATGC')
+nuc_idx = dict((n, i) for i, n in enumerate(sorted(nucs)))
 
 
 default_k = 16
 default_query = 'ATGAC'
+
+
+def kmer_index(kmer):
+
+	idx = 0
+	for nuc in kmer:
+		idx <<= 2
+		idx += nuc_idx[nuc]
+
+	return idx
 
 
 def locate_kmers(query, k, seq):
@@ -30,8 +45,8 @@ def locate_kmers(query, k, seq):
 			sequence won't be searched).
 		seq: str|Bio.Seq.Seq. Sequence to search within.
 
-	Returns:
-		Generator yielding start indices of all matches
+	Yields:
+		int. Start indices of all matches
 	"""
 	start = 0
 	end = len(seq) - k
@@ -44,28 +59,9 @@ def locate_kmers(query, k, seq):
 			break
 
 
-def filter_kmers(locs, phred, k, thresh):
-	"""Filters kmers based on PHRED scores
-
-	Args:
-		locs: sequence of int. Start indices of kmers.
-		phred: sequence of int. PHRED scores.
-		k: int. Length of kmers.
-		thresh: int. kmers containing PHRES scores greater than this will be
-			filtered out.
-
-	Returns:
-		Generator yielding filtered kmer start locations.
-	"""
-	for loc, score in zip(locs, phred):
-
-		# Check if highest score in the range is under the threshold
-		if max(phred[loc:loc + k]) <= thresh:
-			yield loc
-
-
-def process_file(fh, query, k, fmt='fasta', thresh=None):
-	"""Creates sorted list of all unique k-mers in FASTA/Q file matching query
+def kmers_from_fasta(fh, query, k, fmt='fasta', with_qual=False):
+	"""Generator yielding k-mers in FASTA/Q file beginning with query, plus
+	quality information. 
 
 	Args:
 		fh: str|stream. File name or open file handle to read from (1st
@@ -74,16 +70,18 @@ def process_file(fh, query, k, fmt='fasta', thresh=None):
 		k: int. Length of k-mers to find (this much space at the end of the
 			sequence won't be searched).
 		fmt: str. File format (2nd argument to Bio.SeqIO.parse).
-		thresh: int|None. Filter any kmers containing PHRED scores higher
-			than this value.
 
-	Returns:
-		list of str. Sorted list of kmers.
+	Yields:
+		str or (str, int). By default, yields matching k-mers as str. If
+			with_qual is Ture, yields 2-tuples of k-mers plus maximum PHRED
+			score within k-mer.
 	"""
-	kmers = set()
+	has_seqs = False
 
 	# Parse file and iterate over sequences
 	for record in seqio.parse(fh, fmt):
+
+		has_seqs = True
 
 		# Forwards and backwards
 		for revcomp in [False, True]:
@@ -98,21 +96,117 @@ def process_file(fh, query, k, fmt='fasta', thresh=None):
 			# Find locations of kmers
 			kmer_locs = locate_kmers(query, k, seq)
 
-			# Filter by quality if needed
-			if thresh is not None:
-				phred = record.letter_annotations['phred_quality']
-				kmer_locs = filter_kmers(kmer_locs, phred, k, thresh=thresh)
+			# Get quality info
+			if with_qual:
+				phred_scores = record.letter_annotations['phred_quality']
+				if revcomp:
+					phred_scores = list(reversed(phred_scores))
 
-			# Add kmers to set of matches
+			# Iterate kmer locations
 			for loc in kmer_locs:
+
+				# Get kmer as string
 				kmer = str(seq[loc:loc + k])
 
-				# Discard bad characters
-				if set(kmer).issubset(nucs):
-					kmers.add(kmer)
+				# Skip kmers containing bad characters
+				if not set(kmer).issubset(nucs):
+					continue
 
-	# Return sorted list
-	return sorted(kmers)
+				# Yield kmer with quality info
+				if with_qual:
+					qual = max(phred_scores[loc:loc + k])
+					yield kmer, qual
+
+				# Kmer only
+				else:
+					yield kmer
+
+	# None found
+	if not has_seqs:
+		logger.warn('No sequences found, bad file format?')
+
+
+def write_kmer_list(stream, kmers):
+	"""Write sorted list of unique k-mers to output stream
+
+	Args:
+		stream: writeable stream. Stream to write to.
+		kmers: Iterable of str. K-mers to write.
+	"""
+	# Find unique k-mers
+	kmer_set = set(kmers)
+	logger.debug('Found {} matches'.format(len(kmer_set)))
+
+	# Sort them
+	kmers_sorted = sorted(kmer_set)
+
+	# Write
+	for kmer in kmers_sorted:
+		stream.write(kmer + '\n')
+
+
+def write_kmer_counts(stream, kmers):
+	"""Write sorted list of unique k-mers plus counts to output stream
+
+	Args:
+		stream: writeable stream. Stream to write to.
+		kmers: Iterable of str. K-mers to write.
+	"""
+	# Get k-mer counts
+	kmer_counts = Counter(kmers)
+	logger.debug('Found {} matches'.format(len(kmer_counts)))
+
+	# Sort k-mers
+	kmers_sorted = sorted(kmer_counts.keys())
+
+	# Write
+	for kmer in kmers_sorted:
+		stream.write('{} {}\n'.format(kmer, kmer_counts[kmer]))
+
+
+def write_kmer_hist(stream, kmers):
+	"""Write histogram of k-mer counts to output stream
+
+	Args:
+		stream: writeable stream. Stream to write to.
+		kmers: Iterable of str. K-mers to write.
+	"""
+	# Get k-mer counts
+	kmer_counts = Counter(kmers)
+	logger.debug('Found {} matches'.format(len(kmer_counts)))
+
+	# Histogram of counts
+	counts_hist = Counter(kmer_counts.values())
+
+	# Write
+	for n in sorted(counts_hist.keys()):
+		stream.write('{} {}\n'.format(n, counts_hist[n]))
+
+
+def write_kmer_vec(stream, kmers, k, plen):
+	"""Write boolean vector of kmer occurrences to output stream
+
+	All 4^k possible k-mers for a given k are assigned an index based on
+	alphabetic order. 4^k bytes are written to the output stream. Each is one
+	if the k-kmer with the associated index was present in the input,
+	otherwise zero.
+
+	Args:
+		stream: writeable stream. Stream to write to.
+		kmers: Iterable of str. K-mers to write.
+		k: int. Size of k-mers.
+		plen: int. Length of constant perfix to ignore in each k-mer.
+	"""
+	# Initialize byte array (yes, this is 8x bigger than it needs to be)
+	vec = bytearray(4 ** (k - plen))
+
+	# For each kmer, set the appropriate index to one
+	for kmer in kmers:
+		idx = kmer_index(kmer[plen:])
+		vec[idx] = 1
+
+	# Write to output
+	stream.write(vec)
 
 
 def make_dest_path(src_path, dest_dir, ext='.txt'):
@@ -145,6 +239,14 @@ parser.add_argument('-q', '--query', type=str, default=default_query,
 	help='Target sequence to find (default {})'.format(default_query))
 parser.add_argument('-t', '--threshold', type=int, required=False,
 	help='Filter kmers containing PHRED scores over this value')
+
+output_group = parser.add_mutually_exclusive_group()
+output_group.add_argument('-c', '--count', action='store_true',
+	help='Write number of occurrances of each kmer in ouput')
+output_group.add_argument('-H', '--hist', action='store_true',
+	help='Output histogram of counts')
+output_group.add_argument('-B', '--bool', action='store_true',
+	help='Output boolean vector, one 0/1 byte per possible kmer')
 
 parser.add_argument('-f', '--format', type=str, required=False,
 	choices=['fasta', 'fastq', 'fastq-sanger', 'fastq-solexa',
@@ -190,6 +292,19 @@ def main(args=None):
 	if args.debug:
 		logger.setLevel(logging.DEBUG)
 
+	# Output file extension
+	if args.bool:
+		out_ext = '.kmer_vec'
+	elif args.hist:
+		out_ext = '.hist.txt'
+	elif args.count:
+		out_ext = '.counts.txt'
+	else:
+		out_ext = '.kmers.txt'
+
+	if args.threshold is not None:
+		out_ext = '-t{}'.format(args.threshold) + out_ext
+
 	# Batch mode
 	if args.batch:
 
@@ -207,7 +322,8 @@ def main(args=None):
 			os.mkdir(dest_arg)
 
 		# Destination file paths
-		dest_paths = [make_dest_path(src, dest_arg) for src in src_paths]
+		dest_paths = [make_dest_path(src, dest_arg, ext=out_ext)
+		              for src in src_paths]
 
 	# Single-file mode
 	else:
@@ -219,7 +335,7 @@ def main(args=None):
 
 			# If given a directory, output to file with same name
 			if os.path.isdir(dest_arg):
-				dest_paths = [make_dest_path(src_arg, dest_arg)]
+				dest_paths = [make_dest_path(src_arg, dest_arg, ext=out_ext)]
 			else:
 				dest_paths = [dest_arg]
 
@@ -249,29 +365,43 @@ def main(args=None):
 				logger.warn('Refusing to overwrite {}'.format(dest_path))
 				continue
 
-		# Find the kmers
-		kmers = process_file(src_path, query=query, k=k, fmt=fmt,
-		                     thresh=args.threshold)
+		# Find the k-mers with quality info
+		if args.threshold is not None:
+			kmers_q = kmers_from_fasta(src_path, query=query, k=k, fmt=fmt,
+			                           with_qual=True)
 
-		# Warn if none found
-		if not kmers:
-			logger.warn('No kmers found in {}, bad file format?'
-				.format(src_path))
+			# Filter by quality threshold
+			# (note generator)
+			kmers = (kmer for kmer, qual in kmers_q if qual <= args.threshold)
 
-		# Otherwise write to output
 		else:
-			logger.debug('Found {} matches'.format(len(kmers)))
+			# Just the k-mers themselves
+			kmers = kmers_from_fasta(src_path, query=query, k=k, fmt=fmt)
 
-			# Output to file
-			if dest_path is not None:
-				with open(dest_path, 'w') as fh:
-					for kmer in kmers:
-						fh.write(kmer + '\n')
-
-			# Output to stdout
+		# Write output in try block because we can't use a with statement here
+		try:
+			# Output stream - file (text/binary) or stdout
+			if dest_path is None:
+				out_stream = sys.stdout
+			elif args.bool:
+				out_stream = open(dest_path, 'wb')
 			else:
-				for kmer in kmers:
-					print kmer
+				out_stream = open(dest_path, 'w')
+
+			# Output based on arguments
+			if args.bool:
+				write_kmer_vec(out_stream, kmers, k=k, plen=len(query))
+			if args.count:
+				write_kmer_counts(out_stream, kmers)
+			elif args.hist:
+				write_kmer_hist(out_stream, kmers)
+			else:
+				write_kmer_list(out_stream, kmers)
+
+		# Close file handle
+		finally:
+			if dest_path is not None:
+				out_stream.close()
 
 
 # If run as script
