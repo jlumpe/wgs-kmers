@@ -114,7 +114,7 @@ def kmers_from_fasta(fh, query, k, fmt='fasta', with_qual=False):
 
 				# Yield kmer with quality info
 				if with_qual:
-					qual = max(phred_scores[loc:loc + k])
+					qual = min(phred_scores[loc:loc + k])
 					yield kmer, qual
 
 				# Kmer only
@@ -238,7 +238,7 @@ parser.add_argument('-k', '--k', type=int, default=default_k,
 parser.add_argument('-q', '--query', type=str, default=default_query,
 	help='Target sequence to find (default {})'.format(default_query))
 parser.add_argument('-t', '--threshold', type=int, required=False,
-	help='Filter k-mers containing PHRED scores over this value')
+	help='Filter k-mers containing PHRED scores below this value')
 
 output_group = parser.add_mutually_exclusive_group()
 output_group.add_argument('-c', '--count', action='store_true',
@@ -372,7 +372,7 @@ def main(args=None):
 
 			# Filter by quality threshold
 			# (note generator)
-			kmers = (kmer for kmer, qual in kmers_q if qual <= args.threshold)
+			kmers = (kmer for kmer, qual in kmers_q if qual >= args.threshold)
 
 		else:
 			# Just the k-mers themselves
