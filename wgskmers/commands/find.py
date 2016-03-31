@@ -193,7 +193,7 @@ def find_batch_files(directory):
 # Command
 #-----------------------------------------------------------------------------
 
-@click.command(name='find')
+@click.command(name='find', short_help='Find k-mers in a file or set of files')
 
 # Search parameters
 @click.option('-k', '--k', default=default_k, show_default=True,

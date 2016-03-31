@@ -1,6 +1,7 @@
 import os
 import shutil
 import json
+import re
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -154,9 +155,11 @@ class Database(object):
 		else:
 			raise TypeError('Function takes one or two positional arguments')
 
+		session = self._ExpireSession()
+
 		# Determine the file name
 		ext = os.path.splitext(file_path)[1]
-		genome.filename = self.make_genome_file_name(genome) + ext
+		genome.filename = self._make_genome_file_name(genome, session, ext)
 
 		# Copy to directory
 		store_path = self._get_path('genomes', genome.filename)
@@ -167,7 +170,6 @@ class Database(object):
 
 		# Try adding the genome
 		try:
-			session = self._ExpireSession()
 			session.add(genome)
 			session.commit()
 			session.close()
@@ -244,6 +246,21 @@ class Database(object):
 
 		return db
 
-	@classmethod
-	def make_genome_file_name(cls, genome):
-		return '{}'.format(genome.ncbi_acc)
+	def _make_genome_file_name(self, genome, session, ext):
+		if genome.ncbi_acc is not None:
+			val = genome.ncbi_acc
+		else:
+			val = genome.description
+
+		base = re.sub(r'\W+', '_', val[:25])
+		filename = base + ext
+		i = 0
+
+		session = self.get_session()
+		while (session.query(Genome).filter_by(filename=filename).first()
+				is not None):
+
+			i += 1
+			filename = '{}_{}'.format(base, i) + ext
+
+		return filename

@@ -7,6 +7,7 @@ import click
 from .find import find_command
 from .config import config_group
 from .database import database_group
+from .genomes import genomes_group
 
 
 # Configure logger for warnings and debug messeges
@@ -18,7 +19,11 @@ logger = logging.getLogger()
 @click.group()
 @click.option('--debug', is_flag=True, default=False,
               help='Print debug messages')
-def cli(debug=False):
+@click.pass_context
+def cli(ctx, debug=False):
+	# Context object as dictionary
+	ctx.obj = dict()
+
 	# Debug mode
 	if debug:
 		logger.setLevel(logging.DEBUG)
@@ -27,6 +32,7 @@ def cli(debug=False):
 cli.add_command(find_command)
 cli.add_command(config_group)
 cli.add_command(database_group)
+cli.add_command(genomes_group)
 
 
 @cli.command(short_help='Debug shell')
