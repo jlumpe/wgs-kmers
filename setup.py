@@ -12,10 +12,13 @@ setup(
 	install_requires=[
 		'biopython >= 1.66',
 	],
+	extras_require={
+		'tqdm': 'tqdm >= 3.4.0'
+	},
 	include_package_data=True,
 	entry_points={
 		'console_scripts': [
-			'find-kmers = wgskmers.scripts.find_kmers:main',
+			'kmers = wgskmers.commands:main',
 		]
 	}
 )
