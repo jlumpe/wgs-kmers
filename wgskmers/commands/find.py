@@ -8,9 +8,9 @@ import sys
 import logging
 from collections import Counter
 
+import click
 from Bio import SeqIO
 
-from .parser import subparsers
 from .util import tqdm, ProgressSeqParser, iterator_empty
 from wgskmers.kmers import KmerSpec, nucleotides
 
@@ -21,53 +21,6 @@ logger = logging.getLogger()
 # Default arguments
 default_k = 16
 default_prefix = 'ATGAC'
-
-
-#-----------------------------------------------------------------------------
-# Argument parser
-#-----------------------------------------------------------------------------
-
-parser = subparsers.add_parser('find', description=__doc__,
-	help='Find k-mers in a single file or set of files')
-
-# Parameters
-parser.add_argument('-k', '--k', type=int, default=default_k,
-	help='Length of k-mers to find (default {})'.format(default_k))
-parser.add_argument('-q', '--prefix', type=str, default=default_prefix,
-	help='Target sequence to find (default {})'.format(default_prefix))
-parser.add_argument('-t', '--threshold', type=int, required=False,
-	help='Filter k-mers containing PHRED scores below this value')
-
-# Output format
-output_group = parser.add_mutually_exclusive_group()
-output_group.add_argument('-c', '--count', action='store_true',
-	help='Write number of occurrences of each k-mer in ouput')
-output_group.add_argument('-H', '--hist', action='store_true',
-	help='Output histogram of counts')
-output_group.add_argument('-B', '--bool', action='store_true',
-	help='Output boolean vector, one 0/1 byte per possible k-mer ordered alphabetically')
-
-# Input/output options
-parser.add_argument('-f', '--format', type=str, required=False,
-	choices=['fasta', 'fastq', 'fastq-sanger', 'fastq-solexa',
-	         'fastq-illumina'],
-	help='File format, as argument to Bio.SeqIO.parse. If omitted, will infer '
-	     'from extension of first file encountered.')
-parser.add_argument('-b', '--batch', action='store_true',
-	help='Run in batch mode. Will process each file in directory given by '
-	     '"src" argument, writing output to directory given by "dest".')
-parser.add_argument('-o', '--overwrite', action='store_true',
-	help='Overwrite existing output files')
-
-# Other
-parser.add_argument('-p', '--progress', action='store_true',
-	help='Display progress')
-
-# Source and destination files
-parser.add_argument('src', type=str,
-	help='FASTA file to read from, or directory of files in batch mode')
-parser.add_argument('dest', type=str, nargs='?',
-	help='File or directory to write output to. If omitted will write to stdout')
 
 
 #-----------------------------------------------------------------------------
@@ -142,12 +95,13 @@ def write_kmer_counts(stream, finders):
 	# Get k-mer counts
 	kmer_counts = Counter(k for f in finders for k in f.get_kmers())
 
-	# Sort k-mers
-	kmers_sorted = sorted(kmer_counts.keys())
+	# Sort k-mers by count
+	kmers_sorted = sorted(kmer_counts.items(), key=lambda i: i[1],
+	                      reverse=True)
 
 	# Write
-	for kmer in kmers_sorted:
-		stream.write('{} {}\n'.format(kmer, kmer_counts[kmer]))
+	for kmer, count in kmers_sorted:
+		stream.write('{} {}\n'.format(kmer, count))
 
 	return len(kmer_counts)
 
@@ -223,25 +177,81 @@ def infer_format(path):
 		return None
 
 
-def find_batch_files(path):
+def find_batch_files(directory):
 	"""Finds source files in directory for batch processing"""
-	return [f for f in os.listdir(path) if os.path.isfile(f)]
+	paths = []
+
+	for fname in os.listdir(directory):
+		path = os.path.join(directory, fname)
+		if os.path.isfile(path):
+			paths.append(path)
+
+	return paths
 
 
 #-----------------------------------------------------------------------------
-# Main function
+# Command
 #-----------------------------------------------------------------------------
 
-def main(args):
-	"""Runs the sub-command"""
+@click.command(name='find')
+
+# Search parameters
+@click.option('-k', '--k', default=default_k, show_default=True,
+	help='Length of k-mers to find')
+@click.option('-q', '--prefix', default=default_prefix, show_default=True,
+	help='Target sequence to find', metavar='SEQUENCE')
+@click.option('-t', '--threshold', type=int, required=False,
+	help='Filter k-mers containing PHRED scores below this value')
+
+# Output format
+@click.option('-l', '--list', 'output_format', flag_value='list', default=True,
+	help='Output sorted list of k-mers')
+@click.option('-c', '--count', 'output_format', flag_value='counts',
+	help='Output number of occurrences of each k-mer')
+@click.option('-H', '--hist', 'output_format', flag_value='hist',
+	help='Output histogram of counts')
+@click.option('-B', '--bool', 'output_format', flag_value='bool',
+	help='Output boolean vector')
+
+# Input/output options
+@click.option('-f', '--format', default=None,
+	type=click.Choice(['fasta', 'fastq', 'fastq-sanger', 'fastq-solexa',
+	                   'fastq-illumina']),
+	help='File format, as argument to Bio.SeqIO.parse. If omitted, will infer '
+	     'from extension of first file encountered.')
+@click.option('-b', '--batch', is_flag=True, help='Run in batch mode.')
+@click.option('-o', '--overwrite', is_flag=True,
+	help='Overwrite existing output files')
+
+# Other
+@click.option('-p', '--progress', is_flag=True, help='Display progress')
+
+# Source and destination files
+@click.argument('src', type=click.Path(exists=True))
+@click.argument('dest', type=click.Path(), required=False)
+
+# The actual command...
+def find_command(src, dest, prefix, k, **kwargs):
+	"""
+	Find k-mers in a file or set of files. In single-file mode, read sequence
+	file [SRC] and write output to [DEST] (or stdout). In batch mode, process
+	each file in directory given by [SRC], writing output to separate files
+	in directory given by [DEST].
+	"""
+
+	show_progress = kwargs.pop('progress', False)
+	output_format = kwargs.pop('output_format', 'list')
+	threshold = kwargs.pop('threshold', None)
+	batch_mode = kwargs.pop('batch', False)
+	file_format = kwargs.pop('format', None)
+	overwrite_output = kwargs.pop('overwrite', False)
 
 	# Check prefix valid
-	prefix = args.prefix.upper()
+	prefix = prefix.upper()
 	if not set(prefix).issubset(nucleotides):
 		raise ValueError('Prefix contains invalid characters')
 
 	# Check k positive
-	k = args.k
 	if k <= 0:
 		raise ValueError('K must be positive')
 
@@ -249,78 +259,78 @@ def main(args):
 	spec = KmerSpec(k, prefix)
 
 	# Check tqdm present
-	if args.progress:
+	if show_progress:
 		if tqdm is None:
 			raise RuntimeError('tqdm package required to display progress')
 
 	# Absolute source and destination paths
-	src_arg = os.path.realpath(args.src)
-	dest_arg = os.path.realpath(args.dest) if args.dest is not None else None
+	src = os.path.realpath(src)
+	dest = os.path.realpath(dest) if dest is not None else None
 
 	# Output file extension
-	if args.bool:
+	if output_format == 'list':
+		out_ext = '.kmers.txt'
+	elif output_format == 'bool':
 		out_ext = '.kmer_vec'
-	elif args.hist:
+	elif output_format == 'hist':
 		out_ext = '.hist.txt'
-	elif args.count:
+	elif output_format == 'counts':
 		out_ext = '.counts.txt'
 	else:
-		out_ext = '.kmers.txt'
+		raise ValueError('Bad output format {}'.format(repr(output_format)))
 
-	if args.threshold is not None:
-		out_ext = '-t{}'.format(args.threshold) + out_ext
+	if threshold is not None:
+		out_ext = '-t{}'.format(threshold) + out_ext
 
 	# Batch mode
-	if args.batch:
+	if batch_mode:
 
 		# Check arguments compatible with batch mode
-		if dest_arg is None:
+		if dest is None:
 			raise ValueError('Must give destination directory in batch mode')
 
 		# Find files in source directory (raises OSError if doesn't exist)
-		src_paths = [os.path.join(src_arg, n) for n
-		             in find_batch_files(src_arg)]
+		src_paths = find_batch_files(src)
 		if not src_paths:
-			raise RuntimeError('No files found in {}'.format(src_arg))
+			raise RuntimeError('No files found in {}'.format(src))
 
 		# Create output directory if necessary
-		if not os.path.isdir(dest_arg):
-			os.mkdir(dest_arg)
+		if not os.path.isdir(dest):
+			os.mkdir(dest)
 
 		# Destination file paths
-		dest_paths = [make_dest_path(src, dest_arg, ext=out_ext)
+		dest_paths = [make_dest_path(src, dest, ext=out_ext)
 		              for src in src_paths]
 
 	# Single-file mode
 	else:
 
-		src_paths = [src_arg]
+		src_paths = [src]
 
 		# Get destination path
-		if dest_arg is not None:
+		if dest is not None:
 
 			# If given a directory, output to file with same name
-			if os.path.isdir(dest_arg):
-				dest_paths = [make_dest_path(src_arg, dest_arg, ext=out_ext)]
+			if os.path.isdir(dest):
+				dest_paths = [make_dest_path(src, dest, ext=out_ext)]
 			else:
-				dest_paths = [dest_arg]
+				dest_paths = [dest]
 
 		else:
 			dest_paths = [None]
 
 	# Get format
-	if args.format is None:
-		fmt = infer_format(src_paths[0])
-		if fmt is None:
+	if file_format is None:
+		file_format = infer_format(src_paths[0])
+		if file_format is None:
 			raise ValueError("Couldn't infer format for {}"
 				.format(src_paths[0]))
-		logger.debug('Inferring format "{}" from {}'.format(fmt, src_paths[0]))
-	else:
-		fmt = args.format
+		logger.debug('Inferring format "{}" from {}'
+		             .format(file_format, src_paths[0]))
 
 	# Should be ok, loop over the files
 	paths_iter = zip(src_paths, dest_paths)
-	if args.batch and args.progress:
+	if batch_mode and show_progress:
 		paths_iter = tqdm(paths_iter, unit='files')
 
 	for src_path, dest_path in paths_iter:
@@ -329,22 +339,22 @@ def main(args):
 
 		# Check if output file exists
 		if dest_path is not None and os.path.exists(dest_path):
-			if args.overwrite:
+			if overwrite_output:
 				logger.warn('Overwriting output file {}'.format(dest_path))
 			else:
 				logger.warn('Refusing to overwrite {}'.format(dest_path))
 				continue
 
-		#
-		if args.progress:
-			records = ProgressSeqParser(src_path, fmt=fmt, nested=True)
+		# Wrap parse iterator in progress bar
+		if show_progress:
+			records = ProgressSeqParser(src_path, fmt=file_format, nested=True)
 		else:
-			records = SeqIO.parse(src_path, fmt)
+			records = SeqIO.parse(src_path, file_format)
 
 		# Find the k-mers with quality info
-		if args.threshold is not None:
+		if threshold is not None:
 			finders = kmers_from_records(records, spec,
-			                             quality_threshold=args.threshold)
+			                             quality_threshold=threshold)
 
 		else:
 			# Just the k-mers themselves
@@ -356,33 +366,39 @@ def main(args):
 			logger.warn('No sequences found in {}, bad file format?'
 			            .format(src_path))
 
+		# Output stream - file (text/binary) or StringIO
+		if dest_path is None:
+			from cStringIO import StringIO
+			out_stream = StringIO()
+		elif output_format == 'bool':
+			out_stream = open(dest_path, 'wb')
+		else:
+			out_stream = open(dest_path, 'w')
+
 		# Write output in try block because we can't use a with statement here
 		try:
-			# Output stream - file (text/binary) or stdout
-			if dest_path is None:
-				out_stream = sys.stdout
-			elif args.bool:
-				out_stream = open(dest_path, 'wb')
-			else:
-				out_stream = open(dest_path, 'w')
 
 			# Output based on arguments
-			if args.bool:
+			if output_format == 'list':
+				count = write_kmer_list(out_stream, finders)
+			elif output_format == 'bool':
 				count = write_kmer_vec(out_stream, finders)
-			if args.count:
+			elif output_format == 'counts':
 				count = write_kmer_counts(out_stream, finders)
-			elif args.hist:
+			elif output_format == 'hist':
 				count = write_kmer_hist(out_stream, finders)
 			else:
-				count = write_kmer_list(out_stream, finders)
+				assert False, 'You shouldn\'t be here...'
 
 			logger.debug('Found {} unique k-mers'.format(count))
 
-		# Close file handle
+			# Write to stdout
+			if dest_path is None:
+				if output_format == 'hist':
+					click.echo(out_stream.getvalue())
+				else:
+					click.echo_via_pager(out_stream.getvalue())
+
 		finally:
-			if dest_path is not None:
-				out_stream.close()
-
-
-# Run main function when sub-command is invoked
-parser.set_defaults(func=main)
+			# Close file handle
+			out_stream.close()

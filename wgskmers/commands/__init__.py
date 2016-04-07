@@ -1,12 +1,9 @@
-
-
+"""This package defines console commands for interacting with the project."""
 
 import logging
 
+import click
 
-"""This package defines console commands for interacting with the project."""
-
-from .parser import parser
 from . import find
 
 
@@ -15,24 +12,14 @@ logging.basicConfig(format='%(levelname)s: %(message)s')
 logger = logging.getLogger()
 
 
-
-def main(args=None):
-	"""Main entry point for the console commands.
-
-	Deals with global arguments, then calls main function for correct
-	sub-command.
-
-	Args:
-		args: list of str. Arguments to pass to main argument parser. If None,
-			will use sys.argv.
-	"""
-
-	# Parse arguments
-	args = parser.parse_args(args)
-
+# Top-level cli group
+@click.group()
+@click.option('--debug', is_flag=True, default=False,
+	help='Print debug messages')
+def cli(debug=False):
 	# Debug mode
-	if args.debug:
+	if debug:
 		logger.setLevel(logging.DEBUG)
 
-	# Run command function
-	args.func(args)
+
+cli.add_command(find.find_command)
