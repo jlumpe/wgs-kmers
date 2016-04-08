@@ -4,7 +4,7 @@ import logging
 
 import click
 
-from . import find
+from . import find, config
 
 
 # Configure logger for warnings and debug messeges
@@ -23,3 +23,4 @@ def cli(debug=False):
 
 
 cli.add_command(find.find_command)
+cli.add_command(config.config_group)
