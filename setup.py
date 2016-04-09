@@ -13,6 +13,7 @@ setup(
 		'numpy >= 1.10',
 		'biopython >= 1.66',
 		'click >= 6.6',
+		'sqlalchemy >= 1.0.11',
 		'tqdm': 'tqdm >= 3.4.0',
 	],
 	entry_points={
