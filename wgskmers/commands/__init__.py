@@ -4,7 +4,9 @@ import logging
 
 import click
 
-from . import find, config
+from .find import find_command
+from .config import config_group
+from .database import database_group
 
 
 # Configure logger for warnings and debug messeges
@@ -15,12 +17,13 @@ logger = logging.getLogger()
 # Top-level cli group
 @click.group()
 @click.option('--debug', is_flag=True, default=False,
-	help='Print debug messages')
+              help='Print debug messages')
 def cli(debug=False):
 	# Debug mode
 	if debug:
 		logger.setLevel(logging.DEBUG)
 
 
-cli.add_command(find.find_command)
-cli.add_command(config.config_group)
+cli.add_command(find_command)
+cli.add_command(config_group)
+cli.add_command(database_group)
