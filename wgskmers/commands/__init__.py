@@ -27,3 +27,31 @@ def cli(debug=False):
 cli.add_command(find_command)
 cli.add_command(config_group)
 cli.add_command(database_group)
+
+
+@cli.command(short_help='Debug shell')
+@click.option('--db', type=str)
+def shell(db=None):
+	"""Open up an IPython shell with modules imported"""
+	import IPython
+
+	import wgskmers
+	from wgskmers import kmers, models, database, config, util
+
+	ns = dict(
+		wgskmers=wgskmers,
+		kmers=kmers,
+		models=models,
+		database=database,
+		config=config,
+		util=util,
+	)
+
+	for name in models.__all__:
+		ns[name] = getattr(models, name)
+
+	if db is not None:
+		ns['db'] = database.Database(database.get_registered_dbs()[db])
+		ns['session'] = ns['db'].get_session()
+
+	IPython.start_ipython([], user_ns=ns)
