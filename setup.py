@@ -14,7 +14,8 @@ setup(
 		'biopython >= 1.66',
 		'click >= 6.6',
 		'sqlalchemy >= 1.0.11',
-		'tqdm': 'tqdm >= 3.4.0',
+		'tqdm >= 3.4.0',
+		'appdirs >= 1.4.0',
 	],
 	entry_points={
 		'console_scripts': [
