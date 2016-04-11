@@ -9,9 +9,10 @@ import logging
 from collections import Counter
 
 import click
+from tqdm import tqdm
 from Bio import SeqIO
 
-from .util import tqdm, ProgressSeqParser, iterator_empty
+from .util import ProgressSeqParser, iterator_empty
 from wgskmers.kmers import KmerSpec, nucleotides
 
 
@@ -258,14 +259,9 @@ def find_command(src, dest, prefix, k, **kwargs):
 	# Kmer spec
 	spec = KmerSpec(k, prefix)
 
-	# Check tqdm present
-	if show_progress:
-		if tqdm is None:
-			raise RuntimeError('tqdm package required to display progress')
-
 	# Absolute source and destination paths
-	src = os.path.realpath(src)
-	dest = os.path.realpath(dest) if dest is not None else None
+	src = os.path.abspath(src)
+	dest = os.path.abspath(dest) if dest is not None else None
 
 	# Output file extension
 	if output_format == 'list':
