@@ -8,6 +8,7 @@ from .find import find_command
 from .config import config_group
 from .database import database_group
 from .genomes import genomes_group
+from .kmers import kmers_group
 
 
 # Configure logger for warnings and debug messeges
@@ -33,6 +34,7 @@ cli.add_command(find_command)
 cli.add_command(config_group)
 cli.add_command(database_group)
 cli.add_command(genomes_group)
+cli.add_command(kmers_group)
 
 
 @cli.command(short_help='Debug shell')

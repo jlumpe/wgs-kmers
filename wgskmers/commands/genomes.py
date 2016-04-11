@@ -3,7 +3,6 @@
 import os
 import re
 from glob import glob
-from functools import wraps
 from collections import OrderedDict
 from textwrap import dedent
 from csv import DictWriter, DictReader
@@ -11,7 +10,8 @@ from csv import DictWriter, DictReader
 import click
 from tqdm import tqdm
 
-from wgskmers import database, models
+from wgskmers import models
+from .util import choose_db, with_db
 
 
 gb_header_re = re.compile(r'>gi\|(\d+)\|(?:gb|ref|emb)\|(.+)\|(.*)')
@@ -188,101 +188,11 @@ def parse_import_csv(fh, db):
 	return return_vals
 
 
-def with_db(confirm=False):
-	"""
-	Decorator for commands that use the database.
-
-	Gets database from context and passes as second argument (after context).
-	If the current database was automatically determined, print an explicit
-	message or require confirmation (if confirm=True, used for write ops).
-	"""
-	def decorator(func):
-
-		@wraps(func)
-		def wrapper(ctx, *args, **kwargs):
-
-			# Check if current database chosen automatically
-			auto_method = ctx.obj['db_auto']
-			if auto_method:
-
-				# How was current database determined?
-				if auto_method == 'cwd':
-					method_str = 'current working directory'
-				elif auto_method == 'config':
-					method_str = 'default database in config file'
-				elif auto_method == 'environ':
-					method_str = ('from environment variable {}'
-					              .format(database.DEFAULT_DB_PATH_VAR))
-				elif auto_method == 'override':
-					method_str = 'overridden in shell'
-				else:
-					method_str = 'huh?'
-
-				# Require confirmation
-				if confirm:
-					click.confirm('Using database {} ({}), ok?'
-					              .format(ctx.obj['db'].directory, method_str),
-					              abort=True)
-
-				# Print message
-				else:
-					click.secho('Using database {} ({})'
-					            .format(ctx.obj['db'].directory, method_str),
-					            fg='yellow', err=True)
-
-			# Call wrapped function
-			func(ctx, ctx.obj['db'], *args, **kwargs)
-
-		# Return wrapper, with context
-		return click.pass_context(wrapper)
-
-	# Return decorator
-	return decorator
-
-
 @click.group(name='gen', short_help='Manage reference genomes')
-@click.option('-N', '--db', type=str, help='Use registered database by name')
-@click.option('-d', '--default', is_flag=True, help='Use default database')
-@click.pass_context
-def genomes_group(ctx, db=None, default=False):
-	"""
-	Commands to manage reference genomes in database.
-
-	Specify database to use explicitly with "--db" or "--default" commands. If
-	neither is given will use either database in the current working
-	directory or the one set as default, with confirmation for write ops.
-	"""
-	# Use default database
-	if default:
-		if db is not None:
-			raise click.ClickException('Cant use both --db and --default options')
-
-		db_path = database.get_default_db()
-		if db_path is None:
-			raise click.ClickException('No default database set')
-
-		ctx.obj['db_auto'] = False
-
-	# Use registered database by name
-	elif db is not None:
-		db = db.lower()
-		try:
-			db_path = database.get_registered_dbs()[db]
-		except KeyError:
-			raise click.ClickException('Database "{}" not found'.format(db))
-
-		ctx.obj['db_auto'] = False
-
-	# Determine automatically
-	else:
-		db_path, method = database.get_current_db()
-		if db_path is None:
-			raise click.ClickException('No database currently active')
-
-		ctx.obj['db_auto'] = method
-
-	# Open database and add to context
-	ctx.obj['db'] = database.Database.open(db_path)
+@choose_db()
+def genomes_group():
+	"""Commands to manage reference genomes in database."""
+	pass
 
 
 @genomes_group.command()

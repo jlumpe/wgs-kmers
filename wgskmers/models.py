@@ -2,13 +2,13 @@
 
 from sqlalchemy import Table, ForeignKey
 from sqlalchemy import Column, Integer, String, Boolean, DateTime
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, backref
 from sqlalchemy.ext.declarative import declarative_base
 
 from .sqla import TrackChangesMixin, FlatDict
 
 
-__all__ = ['Base', 'KmerSet', 'Genome', 'GenomeSet']
+__all__ = ['Base', 'KmerSetCollection', 'KmerSet', 'Genome', 'GenomeSet']
 
 
 # SqlAlchemy declarative base
@@ -48,16 +48,16 @@ class GenomeSet(Base, TrackChangesMixin):
 	name = Column(String(), nullable=False, unique=True)
 	description = Column(String())
 
-	genomes = relationship('Genome', secondary=genome_set_assoc,
+	genomes = relationship('Genome', secondary=genome_set_assoc, lazy='dynamic',
 	                       backref='genome_sets')
 
 
-class KmerSet(Base, TrackChangesMixin):
+class KmerSetCollection(Base, TrackChangesMixin):
 	"""A collection of k-mer counts/statistics for a set of genomes calculated
 	with the same parameters.
 	"""
 
-	__tablename__ = 'kmer_sets'
+	__tablename__ = 'kmer_collections'
 
 	id = Column(Integer(), primary_key=True)
 	title = Column(String(), nullable=False, unique=True)
@@ -67,16 +67,19 @@ class KmerSet(Base, TrackChangesMixin):
 	parameters = Column(FlatDict(), nullable=False)
 
 
-class KmerSetEntry(Base):
+class KmerSet(Base):
 
-	__tablename__ = 'kmer_set_entries'
+	__tablename__ = 'kmer_sets'
 
-	kmer_set_id = Column(Integer(), ForeignKey('kmer_sets.id'),
-	                     primary_key=True)
+	collection_id = Column(Integer(), ForeignKey('kmer_collections.id'),
+	                       primary_key=True)
 	genome_id = Column(Integer(), ForeignKey('genomes.id'),
 	                   primary_key=True)
 	dtype_str = Column(String(), nullable=False)
 	has_counts = Column(Boolean(), nullable=False)
+	count = Column(Integer(), nullable=False)
+	filename = Column(String(), nullable=False)
 
-	kmer_set = relationship('KmerSet', backref='entries')
-	genome = relationship('Genome', backref='kmer_sets')
+	collection = relationship('KmerSetCollection',
+		backref=backref('kmer_sets', lazy='dynamic'))
+	genome = relationship('Genome', backref=backref('kmer_sets', lazy='dynamic'))

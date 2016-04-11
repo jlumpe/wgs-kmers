@@ -5,6 +5,7 @@ import re
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+import numpy as np
 
 from .models import *
 from .util import rmpath
@@ -119,7 +120,7 @@ class Database(object):
 
 	_rel_paths = {
 		'sqlite': 'data.db',
-		'kmer_sets': 'kmer_sets',
+		'kmer_collections': 'kmer_collections',
 		'genomes': 'genomes',
 	}
 
@@ -197,6 +198,69 @@ class Database(object):
 		path = self._get_path('genomes', genome.filename)
 		return open(path)
 
+	def create_kmer_collection(self, title, prefix, k, parameters=None):
+
+		if parameters is None:
+			parameters = dict()
+
+		collection = KmerSetCollection(title=title, prefix=prefix, k=k,
+		                               parameters=parameters)
+
+		collection.directory = self._make_kmer_collection_dirname(collection)
+
+		os.mkdir(self._get_path('kmer_collections', collection.directory))
+
+		session = self._ExpireSession()
+		session.add(collection)
+		session.commit()
+
+		return collection
+
+	def add_kmer_set(self, vec, collection, genome, **kwargs):
+
+		# Destination for file
+		filename = 'gen-{}.npy'.format(genome.id)
+		store_path = self._get_path('kmer_collections', collection.directory,
+		                            filename)
+
+		# Create k-mer set
+		kmer_set = KmerSet(
+			collection_id=collection.id,
+			genome_id=genome.id,
+			dtype_str=str(vec.dtype),
+			count=(vec > 0).sum(),
+			filename=filename,
+			**kwargs
+		)
+
+		# Write to file
+		with open(store_path, 'wb') as fh:
+			np.save(fh, vec)
+
+		# Try adding the set
+		try:
+			session = self._ExpireSession()
+			session.add(kmer_set)
+			session.commit()
+
+		# On error, remove the file
+		except Exception as e:
+			os.unlink(store_path)
+			raise e
+
+		return kmer_set
+
+	def get_kmer_set_vec(self, kmer_set):
+
+		file_path = self._get_path(
+			'kmer_collections',
+			kmer_set.collection.directory,
+			kmer_set.filename
+		)
+
+		with open(file_path, 'rb') as fh:
+			return np.load(fh)
+
 	def _get_path(self, which, *args):
 		return os.path.join(self.directory, self._rel_paths[which], *args)
 
@@ -236,7 +300,7 @@ class Database(object):
 			json.dump(info, fh)
 
 		# Create sudirectories
-		os.mkdir(os.path.join(directory, cls._rel_paths['kmer_sets']))
+		os.mkdir(os.path.join(directory, cls._rel_paths['kmer_collections']))
 		os.mkdir(os.path.join(directory, cls._rel_paths['genomes']))
 
 		db = cls(directory)
@@ -257,10 +321,24 @@ class Database(object):
 		i = 0
 
 		session = self.get_session()
-		while (session.query(Genome).filter_by(filename=filename).first()
-				is not None):
-
+		q = session.query(Genome)
+		while q.filter_by(filename=filename).first() is not None:
 			i += 1
 			filename = '{}_{}'.format(base, i) + ext
 
 		return filename
+
+	def _make_kmer_collection_dirname(self, kmer_collection):
+
+		base = re.sub(r'\W+', '_', kmer_collection.title[:25])
+		dirname = base
+		i = 0
+
+		session = self.get_session()
+		q = session.query(KmerSetCollection)
+		while q.filter_by(directory=dirname).first() is not None:
+			i += 1
+			dirname = '{}_{}'.format(base, i) + ext
+
+		return dirname
+
