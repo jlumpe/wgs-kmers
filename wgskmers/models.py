@@ -5,7 +5,7 @@ from sqlalchemy import Column, Integer, String, Boolean, DateTime
 from sqlalchemy.orm import relationship, backref
 from sqlalchemy.ext.declarative import declarative_base
 
-from .sqla import TrackChangesMixin, FlatDict
+from .sqla import TrackChangesMixin, JsonType, MutableJsonDict
 
 
 __all__ = ['Base', 'KmerSetCollection', 'KmerSet', 'Genome', 'GenomeSet']
@@ -64,7 +64,7 @@ class KmerSetCollection(Base, TrackChangesMixin):
 	directory = Column(String(), nullable=False, unique=True)
 	prefix = Column(String(), nullable=False)
 	k = Column(Integer(), nullable=False)
-	parameters = Column(FlatDict(), nullable=False)
+	parameters = Column(MutableJsonDict.as_mutable(JsonType), nullable=False)
 
 
 class KmerSet(Base):
@@ -81,5 +81,5 @@ class KmerSet(Base):
 	filename = Column(String(), nullable=False)
 
 	collection = relationship('KmerSetCollection',
-		backref=backref('kmer_sets', lazy='dynamic'))
+	                          backref=backref('kmer_sets', lazy='dynamic'))
 	genome = relationship('Genome', backref=backref('kmer_sets', lazy='dynamic'))

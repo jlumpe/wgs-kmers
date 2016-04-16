@@ -2,6 +2,8 @@
 
 import datetime
 import json
+import collections
+import weakref
 
 from sqlalchemy import Column, String, DateTime
 from sqlalchemy.event import listen
@@ -41,136 +43,189 @@ class TrackChangesMixin(object):
 		listen(cls, 'before_update', cls.update_time_callback)
 
 
-class MethodFactoryMeta(type):
-	"""Metaclass for classes than generate their methods through a function"""
-
-	def __new__(cls, name, bases, dct):
-		if 'make_methods' in dct:
-			make_func = dct['make_methods']
-
-			if isinstance(make_func, staticmethod):
-				new_methods = make_func.__func__()
-			else:
-				raise TypeError('make_methods must be static method')
-
-			dct.update(new_methods)
-		return type.__new__(cls, name, bases, dct)
+# Python types corresponding to non-collection types storable in JSON
+jsonable_scalars = (int, long, float, basestring, bool, type(None))
 
 
-def wrap_mutation_method(method, name):
-	def wrapper(self, *args, **kwargs):
+class MutableJsonCollection(Mutable):
+	"""ABC for SQLAlchemy JSON collection type, supporting mutation tracking
+
+	When nested under another collection, keeps a weak reference to its
+	parent so that mutation notifications can be propagated back up to the
+	root collection.
+	"""
+
+	def __init__(self, parent=None):
+		if parent is not None:
+			self._parent = weakref.proxy(parent)
+		else:
+			self._parent = None
+
+	def changed(self):
+		super(MutableJsonCollection, self).changed()
+
+		# Call changes() method on parent (if exists)
+		if self._parent is not None:
+			try:
+				self._parent.changed()
+			except weakref.ReferenceError:
+				self._parent = None
+
+	def as_builtin(self):
+		"""Return version of collection as builtin Python type
+
+		(for JSON serialization)
+		"""
+		raise NotImplementedError()
+
+	def _transform_element(self, elem):
+		"""Transforms python types into MutableJsonCollection where possible"""
+
+		if isinstance(elem, collections.Mapping):
+			return MutableJsonDict(elem, parent=self)
+
+		elif isinstance(elem, collections.Sequence):
+			return MutableJsonList(elem, parent=self)
+
+		elif isinstance(elem, jsonable_scalars):
+			return elem
+
+		else:
+			raise TypeError('{} is not a JSONable type'.format(type(elem)))
+
+
+class MutableJsonList(MutableJsonCollection, collections.MutableSequence):
+	"""List-like object corresponding to JSON array in SQLAlchemy.
+
+	Mutations will be tracked in this object and all nested collections.
+	"""
+
+	def __init__(self, sequence, parent=None):
+		# Recursively convert any nested collections to MutableJsonCollection
+		self._list = map(self._transform_element, sequence)
+
+		MutableJsonCollection.__init__(self, parent)
+
+	def __getitem__(self, index):
+		return self._list[index]
+
+	def __setitem__(self, index, value):
+		self._list[index] = self._transform_element(value)
 		self.changed()
-		return method(self, *args, **kwargs)
 
-	wrapper.func_name = name
-	wrapper.__doc__ = method.__doc__
+	def __delitem__(self, index):
+		del self._list[index]
+		self.changed()
 
-	return wrapper
+	def __iter__(self):
+		return iter(self._list)
 
+	def __len__(self):
+		return len(self._list)
 
-class MutableList(Mutable, list):
-	__metaclass__ = MethodFactoryMeta
+	def __repr__(self):
+		return repr(self._list)
 
-	@staticmethod
-	def make_methods():
+	def insert(self, index, value):
+		self._list.insert(index, self._transform_element(value))
+		self.changed()
 
-		list_methods = ['append', 'extend', 'index', 'insert',
-		                'pop', 'remove', 'reverse', 'sort', '__setitem__',
-		                '__setslice__', '__delitem__', '__delslice__',
-		                '__iadd__', '__imul__']
-
-		methods = dict()
-
-		for method_name in list_methods:
-			list_method = getattr(list, method_name)
-			wrapped = wrap_mutation_method(list_method, method_name)
-			methods[method_name] = wrapped
-
-		return methods
+	def as_builtin(self):
+		return self._list
 
 	@classmethod
 	def coerce(cls, key, value):
-		if not isinstance(value, MutableList):
-			if isinstance(value, list):
-				return MutableList(value)
+		if not isinstance(value, MutableJsonList):
+			if isinstance(value, collections.Sequence):
+				return MutableJsonList(value)
 			else:
 				return Mutable.coerce(key, value)
 		else:
 			return value
 
 
-class StringList(TypeDecorator):
+class MutableJsonDict(MutableJsonCollection, collections.MutableMapping):
+	"""Dict-like object corresponding to JSON object in SQLAlchemy.
+
+	Mutations will be tracked in this object and all nested collections.
 	"""
-	SqlAlchemy type for encoding a list of strings and storing
-	in a text field.
-	"""
-	impl = String
 
-	def process_bind_param(self, value, dialect):
-		if value is not None:
-			assert all(isinstance(e, basestring) for e in value)
-			return json.dumps(value, separators=(',', ':'))
-		else:
-			return None
+	def __init__(self, mapping, parent=None):
+		# Recursively convert any nested collections to MutableJsonCollection
+		self._dict = {k: self._transform_element(v) for k, v
+		              in dict(mapping).iteritems()}
 
-	def process_result_value(self, value, dialect):
-		if value is not None:
-			return json.loads(value)
-		else:
-			return None
+		MutableJsonCollection.__init__(self, parent)
 
-MutableList.associate_with(StringList)
+	def __getitem__(self, key):
+		return self._dict[key]
 
+	def __setitem__(self, key, value):
+		if not isinstance(key, basestring):
+			raise TypeError('Key must be string')
 
-class MutableDict(Mutable, dict):
-	__metaclass__ = MethodFactoryMeta
+		self._dict[key] = self._transform_element(value)
+		self.changed()
 
-	@staticmethod
-	def make_methods():
+	def __delitem__(self, key):
+		del self._dict[key]
+		self.changed()
 
-		dict_methods = ['clear', 'pop', 'popitem', 'setdefault', 'update',
-		                '__setitem__', '__delitem__']
+	def __iter__(self):
+		return iter(self._dict)
 
-		methods = dict()
+	def __len__(self):
+		return len(self._dict)
 
-		for method_name in dict_methods:
-			dict_method = getattr(dict, method_name)
-			wrapped = wrap_mutation_method(dict_method, method_name)
-			methods[method_name] = wrapped
+	def __repr__(self):
+		return repr(self._dict)
 
-		return methods
+	def as_builtin(self):
+		return self._dict
 
 	@classmethod
 	def coerce(cls, key, value):
-		if not isinstance(value, MutableDict):
-			if isinstance(value, dict):
-				return MutableDict(value)
+		if not isinstance(value, MutableJsonDict):
+			if isinstance(value, collections.Mapping):
+				return MutableJsonDict(value)
 			else:
 				return Mutable.coerce(key, value)
 		else:
 			return value
 
 
-class FlatDict(TypeDecorator):
-	"""
-	SqlAlchemy type for encoding a dict of strings, numbers, bools, and Nones
-	and storing it in a text field.
-	"""
+class MutableJsonCollectionEncoder(json.JSONEncoder):
+	"""JSON encoder capable of serializing MutableJsonCollection objects"""
+
+	def default(self, obj):
+		if isinstance(obj, MutableJsonCollection):
+			return obj.as_builtin()
+		else:
+			return super(MutableJsonCollectionEncoder, self).default(obj)
+
+
+class JsonType(TypeDecorator):
+	"""SQLA column type for JSON data"""
+
 	impl = String
 
 	def process_bind_param(self, value, dialect):
 		if value is not None:
-			for k, v in value.iteritems():
-				assert isinstance(k, basestring)
-				assert isinstance(v, (basestring, int, long, float, None))
-			return json.dumps(value, separators=(',', ':'))
+			return json.dumps(value, separators=(',', ':'),
+			                  cls=MutableJsonCollectionEncoder)
 		else:
 			return None
 
 	def process_result_value(self, value, dialect):
 		if value is not None:
-			return json.loads(value)
+			json_val = json.loads(value)
+
+			if isinstance(json_val, dict):
+				return MutableJsonDict(json_val)
+			elif isinstance(json_val, list):
+				return MutableJsonList(json_val)
+			else:
+				return json_val
+
 		else:
 			return None
-
-MutableDict.associate_with(FlatDict)
