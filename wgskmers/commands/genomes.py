@@ -10,7 +10,7 @@ from csv import DictWriter, DictReader
 import click
 from tqdm import tqdm
 
-from wgskmers import models
+from wgskmers.database import Genome
 from .util import choose_db, with_db
 
 
@@ -161,7 +161,7 @@ def parse_import_csv(fh, db):
 				continue
 
 			# Check already in database
-			found = (session.query(models.Genome)
+			found = (session.query(Genome)
 			                .filter_by(**{uq_col: val})
 			                .first())
 			if found is not None:
@@ -191,7 +191,7 @@ def parse_import_csv(fh, db):
 @click.group(name='gen', short_help='Manage reference genomes')
 @choose_db()
 def genomes_group():
-	"""Commands to manage reference genomes in database."""
+	"""Commands to manage reference genomes in """
 	pass
 
 
@@ -203,7 +203,7 @@ def list(ctx, db, dest, out_csv=False):
 	"""List reference genomes"""
 
 	session = db.get_session()
-	genomes = session.query(models.Genome).all()
+	genomes = session.query(Genome).all()
 
 	if out_csv:
 

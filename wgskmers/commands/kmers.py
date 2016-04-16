@@ -6,7 +6,7 @@ from tqdm import tqdm
 from Bio import SeqIO
 
 from .util import choose_db, with_db
-from wgskmers import models
+from wgskmers.database import Genome, KmerSetCollection, KmerSet
 from wgskmers.kmers import nucleotides, KmerFinder, KmerSpec
 
 
@@ -27,7 +27,7 @@ def listc(ctx, db):
 	"""
 
 	session = db.get_session()
-	for collection in session.query(models.KmerSetCollection).all():
+	for collection in session.query(KmerSetCollection).all():
 
 		attrs = {a: getattr(collection, a) for a
 		         in ['id', 'k', 'prefix', 'title']}
@@ -70,7 +70,7 @@ def makec(ctx, db, k, prefix, title):
 		raise click.ClickException('Title cannot be empty')
 
 	session = db.get_session()
-	existing = session.query(models.KmerSetCollection).filter_by(title=title)
+	existing = session.query(KmerSetCollection).filter_by(title=title)
 	if existing.first() is not None:
 		raise click.ClickException(
 			'A k-mer collection already exists with this title')
@@ -99,7 +99,7 @@ def calc(ctx, db, collection_id):
 
 	# Get collection
 	session = db.get_session()
-	collection = session.query(models.KmerSetCollection).get(collection_id)
+	collection = session.query(KmerSetCollection).get(collection_id)
 	if collection is None:
 		raise click.ClickException(
 			'No k-mer collection with id {}'
@@ -109,8 +109,8 @@ def calc(ctx, db, collection_id):
 	spec = KmerSpec(k=collection.k, prefix=collection.prefix)
 
 	# Get genomes not already calculated in collection
-	genome_query = session.query(models.Genome).filter(
-		~models.Genome.kmer_sets.any(models.KmerSet.collection == collection)
+	genome_query = session.query(Genome).filter(
+		~Genome.kmer_sets.any(KmerSet.collection == collection)
 	)
 
 	# Iterate through genomes
@@ -150,7 +150,7 @@ def calc(ctx, db, collection_id):
 			)
 			errors += 1
 
-	skipped = session.query(models.Genome).count() - added - errors
+	skipped = session.query(Genome).count() - added - errors
 	click.echo(
 		'Calculated {} sets, {} errors, {} already in collection'
 		.format(added, errors, skipped)

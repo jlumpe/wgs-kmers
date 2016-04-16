@@ -16,10 +16,12 @@ setup(
 		'sqlalchemy >= 1.0.11',
 		'tqdm >= 3.4.0',
 		'appdirs >= 1.4.0',
+		'alembic >=  0.8.5',
 	],
 	entry_points={
 		'console_scripts': [
 			'kmers = wgskmers.commands:cli',
 		]
-	}
+	},
+	include_package_data=True,
 )

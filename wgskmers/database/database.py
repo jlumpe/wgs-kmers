@@ -5,16 +5,18 @@ import re
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from alembic import command as alembic_command
 import numpy as np
 
+from wgskmers.util import rmpath
+from wgskmers.config import config, save_config
 from .models import *
-from .util import rmpath
 from .sqla import ReadOnlySession
-from .config import config, save_config
+from .migrate import get_alembic_config
 
 
 # Current database version number
-DB_VERSION = 1
+CURRENT_DB_VERSION = 1
 
 
 # This environment variable overrides all others to set current database
@@ -34,6 +36,27 @@ INFO_FILE_NAME = '.kmer-db'
 def is_db_directory(path):
 	"""Checks if a directory contains a k-mer database"""
 	return os.path.isfile(os.path.join(path, INFO_FILE_NAME))
+
+
+def get_db_version(path):
+	"""Gets version number of database located in path"""
+	with open(os.path.join(path, INFO_FILE_NAME)) as fh:
+		info = json.load(fh)
+	return info['version']
+
+
+def set_db_version(path, version):
+	"""Set version number of database (to be used after upgrading)"""
+	info_path = os.path.join(path, INFO_FILE_NAME)
+
+	with open(info_path) as fh:
+		info = json.load(fh)
+
+	info['version'] = version
+
+	with open(info_path, 'w') as fh:
+		json.dump(info, fh)
+
 
 
 def get_db_root(path):
@@ -128,15 +151,15 @@ class Database(object):
 		self.directory = directory
 
 		# SqlAlchemy engine
-		self._engine = create_engine('sqlite:///' + self._get_path('sqlite'))
+		self.engine = create_engine('sqlite:///' + self._get_path('sqlite'))
 
 		# SqlAlchemy session classes
-		self._Session = sessionmaker(bind=self._engine)
-		self._ExpireSession = sessionmaker(bind=self._engine,
+		self._Session = sessionmaker(bind=self.engine)
+		self._ExpireSession = sessionmaker(bind=self.engine,
 		                                   expire_on_commit=False)
 
 	def get_session(self):
-		"""Create a new READ-ONLY SQLAlchemy session"""
+		"""Create a new SQLAlchemy session"""
 		return self._Session()
 
 	def store_genome(self, *args, **kwargs):
@@ -261,6 +284,10 @@ class Database(object):
 		with open(file_path, 'rb') as fh:
 			return np.load(fh)
 
+	def alembic_config(self):
+		"""Creates Alembic configuration for sqlite database"""
+		return get_alembic_config(self._get_path('sqlite'))
+
 	def _get_path(self, which, *args):
 		return os.path.join(self.directory, self._rel_paths[which], *args)
 
@@ -274,7 +301,7 @@ class Database(object):
 		with open(info_path) as fh:
 			info = json.load(fh)
 
-		if info['version'] != DB_VERSION:
+		if info['version'] != CURRENT_DB_VERSION:
 			raise RuntimeError('Database is not of the current version')
 
 		return cls(directory)
@@ -294,7 +321,7 @@ class Database(object):
 			raise RuntimeError('{} exists and is not empty'.format(directory))
 
 		# Create info file
-		info = dict(version=DB_VERSION)
+		info = dict(version=CURRENT_DB_VERSION)
 		info_path = os.path.join(directory, INFO_FILE_NAME)
 		with open(info_path, 'w') as fh:
 			json.dump(info, fh)
@@ -303,10 +330,14 @@ class Database(object):
 		os.mkdir(os.path.join(directory, cls._rel_paths['kmer_collections']))
 		os.mkdir(os.path.join(directory, cls._rel_paths['genomes']))
 
+		# Ready to oepn, create database object
 		db = cls(directory)
 		
 		# Create SQLite database tables
-		Base.metadata.create_all(db._engine)
+		Base.metadata.create_all(db.engine)
+
+		# Stamp with current alembic revision
+		alembic_command.stamp(db.alembic_config(), 'head')
 
 		return db
 

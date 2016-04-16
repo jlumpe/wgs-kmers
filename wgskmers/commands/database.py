@@ -6,6 +6,8 @@ import string
 import click
 
 from wgskmers import database, config
+from wgskmers.database.upgrade import upgrader
+from .util import choose_db_path
 
 
 def check_valid_name(name):
@@ -307,3 +309,18 @@ def unregister(name):
 		click.echo('Default database removed from config file.')
 	else:
 		click.echo('Database "{}" removed from config file.'.format(name))
+
+
+@database_group.command()
+@choose_db_path()
+def upgrade(db_path):
+	"""Upgrade a database to the latest version"""
+	upgrader.upgrade(db_path)
+	click.echo('Success!')
+
+
+@database_group.command()
+@choose_db_path()
+def version(db_path):
+	"""Get version of existing database"""
+	click.echo(database.get_db_version(db_path))

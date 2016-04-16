@@ -7,7 +7,7 @@ import click
 from tqdm import tqdm
 import numpy as np
 
-from wgskmers import models
+from wgskmers.database import KmerSetCollection
 from wgskmers.kmers import KmerSpec, KmerFinder, QualityKmerFinder
 from .util import with_db, ProgressSeqParser
 
@@ -113,7 +113,7 @@ def query_command(ctx, db, collection_id, src, **kwargs):
 
 	# Get collection
 	session = db.get_session()
-	collection = session.query(models.KmerSetCollection).get(collection_id)
+	collection = session.query(KmerSetCollection).get(collection_id)
 	if collection is None:
 		raise click.ClickException(
 			'No k-mer collection with id {}'

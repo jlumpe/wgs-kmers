@@ -224,3 +224,66 @@ def with_db(confirm=False, choose=False):
 
 	# Return decorator
 	return decorator
+
+
+def choose_db_path(pass_opts=False):
+	"""Decorator for command/group that picks database path (but doesn't open)
+
+	Used for upgrade commands, etc where database might be an older version.
+	"""
+
+	def decorator(func):
+
+		@wraps(func)
+		def wrapper(*args, **kwargs):
+
+			path = kwargs.get('path', None)
+			db_name = kwargs.get('db_name', None)
+			default_db = kwargs.get('default_db', None)
+
+			if not pass_opts:
+				kwargs.pop('path', None)
+				kwargs.pop('db_name', None)
+				kwargs.pop('default_db', None)
+
+			if path is not None:
+				db_path = os.path.abspath(path)
+
+			elif db_name is not None:
+				try:
+					db_path = database.get_registered_dbs()[db_name]
+				except KeyError:
+					raise click.ClickException(
+						'No database registered with name {}'
+						.format(name)
+					)
+
+			elif default_db:
+				db_path = database.get_default_db()
+				if db_path is None:
+					raise click.ClickException('No default database set')
+
+			else:
+				db_path, method = database.get_current_db()
+				if db_path is None:
+					raise click.ClickException('No database currently active')
+				else:
+					click.confirm('Using database at {}, ok?'.format(db_path),
+					              abort=True)
+
+			func(db_path, *args, **kwargs)
+
+		decorators = [
+			click.option('-N', '--db', 'db_name', type=str, metavar='NAME',
+			             help='Use registered database by name'),
+			click.option('-d', '--default', 'default_db', is_flag=True,
+			             help='Use default database'),
+			click.option('-P', '--path', type=str, metavar='PATH',
+			             help='Specify database by path'),
+		]
+		for d in decorators:
+			wrapper = d(wrapper)
+
+		return wrapper
+
+	return decorator
