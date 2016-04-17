@@ -41,4 +41,5 @@ class DatabaseUpgrader(object):
 
 upgrader = DatabaseUpgrader()
 
-	
+# Version 1 to 2 - just alembic migration
+upgrader.revision_script(1, '704356629cab')

@@ -51,17 +51,17 @@ def guess_fasta_attrs(path):
 			# If so, attributes guessed from the first likely differ
 			for line in fh:
 				if line.startswith('>'):
-					attrs['assembled'] = False
+					attrs['is_assembled'] = False
 					break
 
 			else:
-				attrs['assembled'] = True
+				attrs['is_assembled'] = True
 
 				if match is not None:
-					attrs['ncbi_acc'] = acc.strip()
+					attrs['gb_acc'] = acc.strip()
 
 					try:
-						attrs['ncbi_gi'] = int(gi_str)
+						attrs['gb_gi'] = int(gi_str)
 					except ValueError:
 						pass
 
@@ -70,11 +70,12 @@ def guess_fasta_attrs(path):
 
 genome_import_attrs = OrderedDict([
 	('description', str),
-	('ncbi_gi', int),
-	('ncbi_acc', str),
-	('assembled', parse_bool),
-	('organism_name', str),
-	('organism_taxonomy', str),
+	('gb_db', str),
+	('gb_gi', int),
+	('gb_acc', str),
+	('gb_taxid', int),
+	('is_assembled', parse_bool),
+	('organism', str),
 	('file_format', lambda value: str(value).lower()),
 ])
 
@@ -140,7 +141,7 @@ def parse_import_csv(fh, db):
 					)
 
 		# Check required attributes
-		for attrname in ['description', 'assembled', 'file_format']:
+		for attrname in ['description', 'is_assembled', 'file_format']:
 			if attrs[attrname] is None:
 				raise click.ClickException(
 					err_prefix +
@@ -155,7 +156,7 @@ def parse_import_csv(fh, db):
 			)
 
 		# Check uniqueness of columns
-		for uq_col in ['description', 'ncbi_gi', 'ncbi_acc']:
+		for uq_col in ['description', 'gb_gi', 'gb_acc']:
 			val = attrs[uq_col]
 			if val is None:
 				continue

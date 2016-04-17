@@ -16,7 +16,7 @@ from .migrate import get_alembic_config
 
 
 # Current database version number
-CURRENT_DB_VERSION = 1
+CURRENT_DB_VERSION = 2
 
 
 # This environment variable overrides all others to set current database
@@ -342,8 +342,8 @@ class Database(object):
 		return db
 
 	def _make_genome_file_name(self, genome, session, ext):
-		if genome.ncbi_acc is not None:
-			val = genome.ncbi_acc
+		if genome.gb_acc is not None:
+			val = genome.gb_acc
 		else:
 			val = genome.description
 

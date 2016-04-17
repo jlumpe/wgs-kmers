@@ -128,7 +128,7 @@ def calc(ctx, db, collection_id):
 			finder = KmerFinder(spec, record.seq)
 
 			# If assembled, get boolean vector
-			if genome.assembled:
+			if genome.is_assembled:
 				vec = finder.bool_vec(out=vec)
 
 			# Otherwise, get counts (why not)
@@ -138,7 +138,7 @@ def calc(ctx, db, collection_id):
 		# Try adding the set
 		try:
 			db.add_kmer_set(vec, collection, genome,
-			                has_counts=not genome.assembled)
+			                has_counts=not genome.is_assembled)
 			added += 1
 
 		# Print exception and continue

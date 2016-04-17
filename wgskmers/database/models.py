@@ -22,13 +22,16 @@ class Genome(Base, TrackChangesMixin):
 
 	id = Column(Integer(), primary_key=True)
 	description = Column(String(), nullable=False, unique=True)
-	ncbi_gi = Column(Integer(), unique=True)
-	ncbi_acc = Column(Integer(), unique=True)
-	assembled = Column(Boolean(), nullable=False)
-	organism_name = Column(String())
-	organism_taxonomy = Column(String())
+	gb_db = Column(String())
+	gb_id = Column(Integer(), unique=True)
+	gb_acc = Column(Integer(), unique=True)
+	gb_summary = Column(MutableJsonDict.as_mutable(JsonType))
+	gb_taxid = Column(Integer())
+	is_assembled = Column(Boolean(), nullable=False)
+	organism = Column(String())
 	filename = Column(String(), nullable=False, unique=True)
 	file_format = Column(String(), nullable=False)
+	extra = Column(MutableJsonDict.as_mutable(JsonType))
 
 
 genome_set_assoc = Table(
@@ -47,6 +50,7 @@ class GenomeSet(Base, TrackChangesMixin):
 	id = Column(Integer(), primary_key=True)
 	name = Column(String(), nullable=False, unique=True)
 	description = Column(String())
+	extra = Column(MutableJsonDict.as_mutable(JsonType))
 
 	genomes = relationship('Genome', secondary=genome_set_assoc, lazy='dynamic',
 	                       backref='genome_sets')
@@ -65,6 +69,7 @@ class KmerSetCollection(Base, TrackChangesMixin):
 	prefix = Column(String(), nullable=False)
 	k = Column(Integer(), nullable=False)
 	parameters = Column(MutableJsonDict.as_mutable(JsonType), nullable=False)
+	extra = Column(MutableJsonDict.as_mutable(JsonType))
 
 
 class KmerSet(Base):
@@ -79,6 +84,7 @@ class KmerSet(Base):
 	has_counts = Column(Boolean(), nullable=False)
 	count = Column(Integer(), nullable=False)
 	filename = Column(String(), nullable=False)
+	extra = Column(MutableJsonDict.as_mutable(JsonType))
 
 	collection = relationship('KmerSetCollection',
 	                          backref=backref('kmer_sets', lazy='dynamic'))
