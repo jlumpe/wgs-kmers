@@ -161,10 +161,12 @@ def query_command(ctx, db, collection_id, src, **kwargs):
 	query_vec = counts_vec >= c_threshold
 
 	# Now loop through reference kmer sets
-	iterator = tqdm(ref_sets, desc='Querying reference genomes')
-	for i, kmer_set in enumerate(iterator):
+	iterator = db.load_kmer_sets_lazy(collection, ref_sets)
+	iterator = tqdm(iterator, desc='Querying reference genomes',
+	                total=len(ref_sets))
+	for i, vec in enumerate(iterator):
 
-		ref_vec = db.get_kmer_set_vec(kmer_set) > 0
+		ref_vec = vec > 0
 
 		for j, metric in enumerate(metrics):
 			scores[i, j] = metric(query_vec, ref_vec)

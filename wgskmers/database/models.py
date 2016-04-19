@@ -69,6 +69,7 @@ class KmerSetCollection(Base, TrackChangesMixin):
 	prefix = Column(String(), nullable=False)
 	k = Column(Integer(), nullable=False)
 	parameters = Column(MutableJsonDict.as_mutable(JsonType), nullable=False)
+	format = Column(String(), nullable=False)
 	extra = Column(MutableJsonDict.as_mutable(JsonType))
 
 

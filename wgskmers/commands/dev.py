@@ -143,3 +143,33 @@ def stamp(db_path, revision, **kwargs):
 	cfg = get_alembic_config(get_sqlite_path(db_path))
 	alembic_command.stamp(cfg, revision, **kwargs)
 
+
+@alembic.command()
+@click.option('--sql', is_flag=True,
+              help='Don\'t emit SQL to database - dump to standard output/file '
+                   'instead')
+@click.option('--tag', type=str,
+              help='Arbitrary \'tag\' name - can be used by custom env.py '
+                   'scripts')
+@click.argument('revision')
+@choose_db_path()
+def upgrade(db_path, revision, **kwargs):
+	"""Upgrade database to revision"""
+	cfg = get_alembic_config(get_sqlite_path(db_path))
+	alembic_command.upgrade(cfg, revision, **kwargs)
+
+
+@alembic.command()
+@click.option('--sql', is_flag=True,
+              help='Don\'t emit SQL to database - dump to standard output/file '
+                   'instead')
+@click.option('--tag', type=str,
+              help='Arbitrary \'tag\' name - can be used by custom env.py '
+                   'scripts')
+@click.argument('revision')
+@choose_db_path()
+def downgrade(db_path, revision, **kwargs):
+	"""Upgrade database to revision"""
+	cfg = get_alembic_config(get_sqlite_path(db_path))
+	alembic_command.downgrade(cfg, revision, **kwargs)
+
