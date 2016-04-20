@@ -214,13 +214,11 @@ class Database(object):
 		path = self._get_path('genomes', genome.filename)
 		return open(path)
 
-	def create_kmer_collection(self, title, prefix, k, parameters=None):
+	def create_kmer_collection(self, **kwargs):
 
-		if parameters is None:
-			parameters = dict()
+		kwargs.setdefault('parameters', dict())
 
-		collection = KmerSetCollection(title=title, prefix=prefix, k=k,
-		                               parameters=parameters)
+		collection = KmerSetCollection(**kwargs)
 
 		collection.directory = self._make_kmer_collection_dirname(collection)
 
@@ -358,7 +356,7 @@ class Database(object):
 			val = genome.description
 
 		max_len = 25
-		ext = genome.format
+		ext = genome.file_format
 
 		base = re.sub(r'\W+', '_', val[:max_len])
 		filename = base + ext
@@ -391,13 +389,13 @@ class Database(object):
 		def __init__(self, db, collection):
 			self.db = db
 			self.collection = collection
-			self.format = kmer_storage_formats[collection.format](self)
+			self.format = kmer_storage_formats[collection.format](collection)
 
 		def __call__(self, vec, genome, **kwargs):
 
 			# Destination for file
 			filename = 'gen-{}.npy'.format(genome.id)
-			store_path = db._get_path(
+			store_path = self.db._get_path(
 				'kmer_collections',
 				self.collection.directory,
 				filename
@@ -419,7 +417,7 @@ class Database(object):
 
 			# Try adding the set
 			try:
-				session = db._ExpireSession()
+				session = self.db._ExpireSession()
 				session.add(kmer_set)
 				session.commit()
 
