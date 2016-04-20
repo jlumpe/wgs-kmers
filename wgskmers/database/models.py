@@ -33,6 +33,14 @@ class Genome(Base, TrackChangesMixin):
 	file_format = Column(String(), nullable=False)
 	extra = Column(MutableJsonDict.as_mutable(JsonType))
 
+	def __repr__(self):
+		return '<{} id={} desc="{}">'.format(
+			type(self).__name__,
+			self.id,
+			self.description,
+		)
+
+
 
 genome_set_assoc = Table(
 	'genome_set_assoc',
@@ -55,6 +63,13 @@ class GenomeSet(Base, TrackChangesMixin):
 	genomes = relationship('Genome', secondary=genome_set_assoc, lazy='dynamic',
 	                       backref='genome_sets')
 
+	def __repr__(self):
+		return '<{} id={} desc="{}">'.format(
+			type(self).__name__,
+			self.id,
+			self.description,
+		)
+
 
 class KmerSetCollection(Base, TrackChangesMixin):
 	"""A collection of k-mer counts/statistics for a set of genomes calculated
@@ -71,6 +86,15 @@ class KmerSetCollection(Base, TrackChangesMixin):
 	parameters = Column(MutableJsonDict.as_mutable(JsonType), nullable=False)
 	format = Column(String(), nullable=False)
 	extra = Column(MutableJsonDict.as_mutable(JsonType))
+
+	def __repr__(self):
+		return '<{} id={} k={} prefix={} title="{}">'.format(
+			type(self).__name__,
+			self.id,
+			self.k,
+			self.prefix,
+			self.title,
+		)
 
 
 class KmerSet(Base):
@@ -90,3 +114,10 @@ class KmerSet(Base):
 	collection = relationship('KmerSetCollection',
 	                          backref=backref('kmer_sets', lazy='dynamic'))
 	genome = relationship('Genome', backref=backref('kmer_sets', lazy='dynamic'))
+
+	def __repr__(self):
+		return '<{} {}, {}>'.format(
+			type(self).__name__,
+			repr(self.collection),
+			repr(self.genome),
+		)
