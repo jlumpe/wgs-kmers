@@ -5,16 +5,20 @@ import re
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from alembic import command as alembic_command
 import numpy as np
 
+from wgskmers.util import rmpath, kwargs_finished
+from wgskmers.config import config, save_config
+from wgskmers.kmers import KmerSpec
 from .models import *
-from .util import rmpath
 from .sqla import ReadOnlySession
-from .config import config, save_config
+from .store import kmer_storage_formats
+from .migrate import get_alembic_config
 
 
 # Current database version number
-DB_VERSION = 1
+CURRENT_DB_VERSION = 3
 
 
 # This environment variable overrides all others to set current database
@@ -34,6 +38,27 @@ INFO_FILE_NAME = '.kmer-db'
 def is_db_directory(path):
 	"""Checks if a directory contains a k-mer database"""
 	return os.path.isfile(os.path.join(path, INFO_FILE_NAME))
+
+
+def get_db_version(path):
+	"""Gets version number of database located in path"""
+	with open(os.path.join(path, INFO_FILE_NAME)) as fh:
+		info = json.load(fh)
+	return info['version']
+
+
+def set_db_version(path, version):
+	"""Set version number of database (to be used after upgrading)"""
+	info_path = os.path.join(path, INFO_FILE_NAME)
+
+	with open(info_path) as fh:
+		info = json.load(fh)
+
+	info['version'] = version
+
+	with open(info_path, 'w') as fh:
+		json.dump(info, fh)
+
 
 
 def get_db_root(path):
@@ -128,46 +153,37 @@ class Database(object):
 		self.directory = directory
 
 		# SqlAlchemy engine
-		self._engine = create_engine('sqlite:///' + self._get_path('sqlite'))
+		self.engine = create_engine('sqlite:///' + self._get_path('sqlite'))
 
 		# SqlAlchemy session classes
-		self._Session = sessionmaker(bind=self._engine)
-		self._ExpireSession = sessionmaker(bind=self._engine,
+		self._Session = sessionmaker(bind=self.engine)
+		self._ExpireSession = sessionmaker(bind=self.engine,
 		                                   expire_on_commit=False)
 
 	def get_session(self):
-		"""Create a new READ-ONLY SQLAlchemy session"""
+		"""Create a new SQLAlchemy session"""
 		return self._Session()
 
-	def store_genome(self, *args, **kwargs):
+	def store_genome(self, file_, **kwargs):
 
-		# Pass file path to store, create genome from kwargs
-		if len(args) == 1:
-			file_path, = args
-			genome = Genome(**kwargs)
-
-		# Pass file path and Genome object
-		elif len(args) == 2:
-			file_path, genome = args
-			if kwargs:
-				raise TypeError('No kwargs taken if Genome instance passed')
-
-		# Bad positional arguments
-		else:
-			raise TypeError('Function takes one or two positional arguments')
+		# Create genome from kwargs
+		genome = Genome(**kwargs)
 
 		session = self._ExpireSession()
 
 		# Determine the file name
-		ext = os.path.splitext(file_path)[1]
-		genome.filename = self._make_genome_file_name(genome, session, ext)
+		genome.filename = self._make_genome_file_name(genome, session)
 
 		# Copy to directory
 		store_path = self._get_path('genomes', genome.filename)
 		if os.path.exists(store_path):
 			raise RuntimeError('{} already exists'.format(store_path))
+
+		if isinstance(file_, basestring):
+			shutil.copyfile(file_, store_path)
 		else:
-			shutil.copyfile(file_path, store_path)
+			with open(store_path, 'w'):
+				store_path.write(file_.read())
 
 		# Try adding the genome
 		try:
@@ -198,13 +214,11 @@ class Database(object):
 		path = self._get_path('genomes', genome.filename)
 		return open(path)
 
-	def create_kmer_collection(self, title, prefix, k, parameters=None):
+	def create_kmer_collection(self, **kwargs):
 
-		if parameters is None:
-			parameters = dict()
+		kwargs.setdefault('parameters', dict())
 
-		collection = KmerSetCollection(title=title, prefix=prefix, k=k,
-		                               parameters=parameters)
+		collection = KmerSetCollection(**kwargs)
 
 		collection.directory = self._make_kmer_collection_dirname(collection)
 
@@ -216,50 +230,71 @@ class Database(object):
 
 		return collection
 
-	def add_kmer_set(self, vec, collection, genome, **kwargs):
+	def store_kmer_sets(self, collection):
+		return Database.KmerSetAdder(self, collection)
 
-		# Destination for file
-		filename = 'gen-{}.npy'.format(genome.id)
-		store_path = self._get_path('kmer_collections', collection.directory,
-		                            filename)
+	def load_kmer_sets(self, collection, kmer_sets, **kwargs):
 
-		# Create k-mer set
-		kmer_set = KmerSet(
-			collection_id=collection.id,
-			genome_id=genome.id,
-			dtype_str=str(vec.dtype),
-			count=(vec > 0).sum(),
-			filename=filename,
-			**kwargs
-		)
+		stack = kwargs.pop('stack', False)
+		dtype = kwargs.pop('dtype', None)
+		wrap_iter = kwargs.pop('wrap_iter', None)
+		kwargs_finished(kwargs)
 
-		# Write to file
-		with open(store_path, 'wb') as fh:
-			np.save(fh, vec)
+		fmt = kmer_storage_formats[collection.format](collection)
 
-		# Try adding the set
-		try:
-			session = self._ExpireSession()
-			session.add(kmer_set)
-			session.commit()
+		if stack:
+			spec = KmerSpec(collection.k, collection.prefix)
+			if dtype is None:
+				dtype = np.dtype(bool)
+			array = np.ndarray((len(kmer_sets), spec.idx_len), dtype=dtype)
 
-		# On error, remove the file
-		except Exception as e:
-			os.unlink(store_path)
-			raise e
+		else:
+			vecs = []
 
-		return kmer_set
 
-	def get_kmer_set_vec(self, kmer_set):
+		sets_iter = enumerate(kmer_sets)
+		if wrap_iter is not None:
+			sets_iter = wrap_iter(list(sets_iter))
 
-		file_path = self._get_path(
-			'kmer_collections',
-			kmer_set.collection.directory,
-			kmer_set.filename
-		)
+		for i, kmer_set in sets_iter:
 
-		with open(file_path, 'rb') as fh:
-			return np.load(fh)
+			file_path = self._get_path(
+				'kmer_collections',
+				kmer_set.collection.directory,
+				kmer_set.filename
+			)
+
+			with open(file_path, 'rb') as fh:
+				vec = fmt.load(fh, kmer_set)
+
+			if stack:
+				array[i, :] = vec
+			else:
+				vecs.append(vec)
+
+		if stack:
+			return array
+		else:
+			return vecs
+
+	def load_kmer_sets_lazy(self, collection, kmer_sets):
+
+		fmt = kmer_storage_formats[collection.format](collection)
+
+		for i, kmer_set in enumerate(kmer_sets):
+
+			file_path = self._get_path(
+				'kmer_collections',
+				kmer_set.collection.directory,
+				kmer_set.filename
+			)
+
+			with open(file_path, 'rb') as fh:
+				yield fmt.load(fh, kmer_set)
+
+	def alembic_config(self):
+		"""Creates Alembic configuration for sqlite database"""
+		return get_alembic_config(self._get_path('sqlite'))
 
 	def _get_path(self, which, *args):
 		return os.path.join(self.directory, self._rel_paths[which], *args)
@@ -274,7 +309,7 @@ class Database(object):
 		with open(info_path) as fh:
 			info = json.load(fh)
 
-		if info['version'] != DB_VERSION:
+		if info['version'] != CURRENT_DB_VERSION:
 			raise RuntimeError('Database is not of the current version')
 
 		return cls(directory)
@@ -294,7 +329,7 @@ class Database(object):
 			raise RuntimeError('{} exists and is not empty'.format(directory))
 
 		# Create info file
-		info = dict(version=DB_VERSION)
+		info = dict(version=CURRENT_DB_VERSION)
 		info_path = os.path.join(directory, INFO_FILE_NAME)
 		with open(info_path, 'w') as fh:
 			json.dump(info, fh)
@@ -303,20 +338,27 @@ class Database(object):
 		os.mkdir(os.path.join(directory, cls._rel_paths['kmer_collections']))
 		os.mkdir(os.path.join(directory, cls._rel_paths['genomes']))
 
+		# Ready to oepn, create database object
 		db = cls(directory)
 		
 		# Create SQLite database tables
-		Base.metadata.create_all(db._engine)
+		Base.metadata.create_all(db.engine)
+
+		# Stamp with current alembic revision
+		alembic_command.stamp(db.alembic_config(), 'head')
 
 		return db
 
-	def _make_genome_file_name(self, genome, session, ext):
-		if genome.ncbi_acc is not None:
-			val = genome.ncbi_acc
+	def _make_genome_file_name(self, genome, session):
+		if genome.gb_acc is not None:
+			val = genome.gb_acc
 		else:
 			val = genome.description
 
-		base = re.sub(r'\W+', '_', val[:25])
+		max_len = 25
+		ext = genome.file_format
+
+		base = re.sub(r'\W+', '_', val[:max_len])
 		filename = base + ext
 		i = 0
 
@@ -342,3 +384,46 @@ class Database(object):
 
 		return dirname
 
+	class KmerSetAdder(object):
+
+		def __init__(self, db, collection):
+			self.db = db
+			self.collection = collection
+			self.format = kmer_storage_formats[collection.format](collection)
+
+		def __call__(self, vec, genome, **kwargs):
+
+			# Destination for file
+			filename = 'gen-{}.npy'.format(genome.id)
+			store_path = self.db._get_path(
+				'kmer_collections',
+				self.collection.directory,
+				filename
+			)
+
+			# Create k-mer set
+			kmer_set = KmerSet(
+				collection_id=self.collection.id,
+				genome_id=genome.id,
+				dtype_str=str(vec.dtype),
+				count=(vec > 0).sum(),
+				filename=filename,
+				**kwargs
+			)
+
+			# Write to file
+			with open(store_path, 'wb') as fh:
+				self.format.store(fh, vec, kmer_set)
+
+			# Try adding the set
+			try:
+				session = self.db._ExpireSession()
+				session.add(kmer_set)
+				session.commit()
+
+			# On error, remove the file
+			except Exception as e:
+				os.unlink(store_path)
+				raise e
+
+			return kmer_set

@@ -6,8 +6,9 @@ from tqdm import tqdm
 from Bio import SeqIO
 
 from .util import choose_db, with_db
-from wgskmers import models
+from wgskmers.database import Genome, KmerSetCollection, KmerSet
 from wgskmers.kmers import nucleotides, KmerFinder, KmerSpec
+from wgskmers.database.store import kmer_storage_formats
 
 
 @click.group(name='refs',
@@ -27,7 +28,7 @@ def listc(ctx, db):
 	"""
 
 	session = db.get_session()
-	for collection in session.query(models.KmerSetCollection).all():
+	for collection in session.query(KmerSetCollection).all():
 
 		attrs = {a: getattr(collection, a) for a
 		         in ['id', 'k', 'prefix', 'title']}
@@ -39,11 +40,13 @@ def listc(ctx, db):
 
 
 @kmers_group.command(short_help='Create new collection of reference k-mers')
+@click.option('-f', '--format', type=click.Choice(kmer_storage_formats.keys()),
+              default='coords')
 @click.argument('k', type=int)
 @click.argument('prefix', type=str)
 @click.argument('title', type=str)
 @with_db(confirm=True)
-def makec(ctx, db, k, prefix, title):
+def makec(ctx, db, k, prefix, title, format):
 	"""Create a new collection of reference k-mers with given parameters
 
 	Args:
@@ -70,13 +73,14 @@ def makec(ctx, db, k, prefix, title):
 		raise click.ClickException('Title cannot be empty')
 
 	session = db.get_session()
-	existing = session.query(models.KmerSetCollection).filter_by(title=title)
+	existing = session.query(KmerSetCollection).filter_by(title=title)
 	if existing.first() is not None:
 		raise click.ClickException(
 			'A k-mer collection already exists with this title')
 
 	# Create it
-	collection = db.create_kmer_collection(k=k, prefix=prefix, title=title)
+	collection = db.create_kmer_collection(k=k, prefix=prefix, title=title,
+	                                       format=format)
 
 	click.echo(
 		'K-mer collection "{}" created with ID {}'
@@ -99,18 +103,20 @@ def calc(ctx, db, collection_id):
 
 	# Get collection
 	session = db.get_session()
-	collection = session.query(models.KmerSetCollection).get(collection_id)
+	collection = session.query(KmerSetCollection).get(collection_id)
 	if collection is None:
 		raise click.ClickException(
 			'No k-mer collection with id {}'
 			.format(collection_id)
 		)
 
+	store_set = db.store_kmer_sets(collection)
+
 	spec = KmerSpec(k=collection.k, prefix=collection.prefix)
 
 	# Get genomes not already calculated in collection
-	genome_query = session.query(models.Genome).filter(
-		~models.Genome.kmer_sets.any(models.KmerSet.collection == collection)
+	genome_query = session.query(Genome).filter(
+		~Genome.kmer_sets.any(KmerSet.collection == collection)
 	)
 
 	# Iterate through genomes
@@ -128,7 +134,7 @@ def calc(ctx, db, collection_id):
 			finder = KmerFinder(spec, record.seq)
 
 			# If assembled, get boolean vector
-			if genome.assembled:
+			if genome.is_assembled:
 				vec = finder.bool_vec(out=vec)
 
 			# Otherwise, get counts (why not)
@@ -137,8 +143,7 @@ def calc(ctx, db, collection_id):
 
 		# Try adding the set
 		try:
-			db.add_kmer_set(vec, collection, genome,
-			                has_counts=not genome.assembled)
+			store_set(vec, genome, has_counts=not genome.is_assembled)
 			added += 1
 
 		# Print exception and continue
@@ -150,7 +155,7 @@ def calc(ctx, db, collection_id):
 			)
 			errors += 1
 
-	skipped = session.query(models.Genome).count() - added - errors
+	skipped = session.query(Genome).count() - added - errors
 	click.echo(
 		'Calculated {} sets, {} errors, {} already in collection'
 		.format(added, errors, skipped)

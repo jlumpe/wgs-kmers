@@ -17,3 +17,9 @@ def rmpath(path):
 
 	else:
 		return False
+
+
+def kwargs_finished(kwargs):
+	"""Raise an error if all elements of kwargs dict haven't been popped"""
+	if kwargs:
+		raise TypeError('Unknown keyword argument {}'.format(repr(kwargs.keys()[0])))

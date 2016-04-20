@@ -7,7 +7,7 @@ import click
 from tqdm import tqdm
 import numpy as np
 
-from wgskmers import models
+from wgskmers.database import KmerSetCollection
 from wgskmers.kmers import KmerSpec, KmerFinder, QualityKmerFinder
 from .util import with_db, ProgressSeqParser
 
@@ -24,17 +24,37 @@ class QueryMetric(object):
 	def __call__(self, query_vec, ref_vec):
 		return self.func(query_vec, ref_vec)
 
-query_metrics = dict(
-	hamming=QueryMetric('Hamming distance',
-	                    lambda q, r: (q != r).sum(),
-	                    is_distance=True),
-	jaccard=QueryMetric('Jaccard Index',
-	                    lambda q, r: float((q & r).sum()) / (q | r).sum(),
-	                    is_distance=False),
-	asym_jacc=QueryMetric('Asymmetrical Jaccard',
-	                      lambda q, r: float((q & r).sum()) / r.sum(),
-	                      is_distance=False),
-)
+
+
+query_metrics = dict()
+
+def metric(name, is_distance):
+	def decorator(func):
+		km = QueryMetric(name, func, is_distance)
+		query_metrics[func.__name__] = km
+		return km
+	return decorator
+
+
+@metric('Hamming distance', is_distance=True)
+def hamming(query, ref):
+	return (query != ref).sum()
+
+@metric('Jaccard Index', is_distance=False)
+def jaccard(query, ref):
+	d = float((query | ref).sum())
+	if d > 0:
+		return (query & ref).sum() / d
+	else:
+		return 0
+
+@metric('Asymmetrical Jaccard', is_distance=False)
+def asym_jacc(query, ref):
+	d = float(ref.sum())
+	if d > 0:
+		return (query & ref).sum() / d
+	else:
+		return 0
 
 
 def kmers_from_records(records, spec, quality_threshold=None):
@@ -113,7 +133,7 @@ def query_command(ctx, db, collection_id, src, **kwargs):
 
 	# Get collection
 	session = db.get_session()
-	collection = session.query(models.KmerSetCollection).get(collection_id)
+	collection = session.query(KmerSetCollection).get(collection_id)
 	if collection is None:
 		raise click.ClickException(
 			'No k-mer collection with id {}'
@@ -161,10 +181,12 @@ def query_command(ctx, db, collection_id, src, **kwargs):
 	query_vec = counts_vec >= c_threshold
 
 	# Now loop through reference kmer sets
-	iterator = tqdm(ref_sets, desc='Querying reference genomes')
-	for i, kmer_set in enumerate(iterator):
+	iterator = db.load_kmer_sets_lazy(collection, ref_sets)
+	iterator = tqdm(iterator, desc='Querying reference genomes',
+	                total=len(ref_sets))
+	for i, vec in enumerate(iterator):
 
-		ref_vec = db.get_kmer_set_vec(kmer_set) > 0
+		ref_vec = vec > 0
 
 		for j, metric in enumerate(metrics):
 			scores[i, j] = metric(query_vec, ref_vec)
