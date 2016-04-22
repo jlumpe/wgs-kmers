@@ -112,8 +112,11 @@ class KmerSet(Base):
 	extra = Column(MutableJsonDict.as_mutable(JsonType))
 
 	collection = relationship('KmerSetCollection',
-	                          backref=backref('kmer_sets', lazy='dynamic'))
-	genome = relationship('Genome', backref=backref('kmer_sets', lazy='dynamic'))
+		backref=backref('kmer_sets', lazy='dynamic',
+		                cascade='all, delete-orphan'))
+	genome = relationship('Genome',
+		backref=backref('kmer_sets', lazy='dynamic',
+		                cascade='all, delete-orphan'))
 
 	def __repr__(self):
 		return '<{} {}, {}>'.format(

@@ -194,7 +194,7 @@ class Database(object):
 		# On error, remove the file
 		except Exception as e:
 			os.unlink(store_path)
-			raise e
+			raise
 
 		return genome
 
@@ -217,16 +217,25 @@ class Database(object):
 	def create_kmer_collection(self, **kwargs):
 
 		kwargs.setdefault('parameters', dict())
+		kwargs.setdefault('format', 'coords')
+
+		assert kwargs['format'] in kmer_storage_formats
 
 		collection = KmerSetCollection(**kwargs)
 
 		collection.directory = self._make_kmer_collection_dirname(collection)
 
-		os.mkdir(self._get_path('kmer_collections', collection.directory))
+		col_path = self._get_path('kmer_collections', collection.directory)
+		os.mkdir(col_path)
 
-		session = self._ExpireSession()
-		session.add(collection)
-		session.commit()
+		try:
+			session = self._ExpireSession()
+			session.add(collection)
+			session.commit()
+
+		except:
+			os.rmdir(col_path)
+			raise
 
 		return collection
 
@@ -372,7 +381,7 @@ class Database(object):
 
 	def _make_kmer_collection_dirname(self, kmer_collection):
 
-		base = re.sub(r'\W+', '_', kmer_collection.title[:25])
+		base = re.sub(r'\W+', '_', kmer_collection.title[:25]).lower()
 		dirname = base
 		i = 0
 
@@ -383,6 +392,7 @@ class Database(object):
 			dirname = '{}_{}'.format(base, i) + ext
 
 		return dirname
+
 
 	class KmerSetAdder(object):
 
@@ -424,6 +434,99 @@ class Database(object):
 			# On error, remove the file
 			except Exception as e:
 				os.unlink(store_path)
-				raise e
+				raise
 
 			return kmer_set
+
+
+class KmerSetLoader(object):
+	"""Loads k-mer set vectors from collection database
+
+	This is created as a separate object so that some initialization can
+	only be done once when loading a large number of sets.
+	"""
+
+	def __init__(self, db, collection):
+		self.db = db
+		self.collection = collection
+		self.format = kmer_storage_formats[collection.format](collection)
+
+	def __getstate__(self):
+		"""For pickling"""
+		return (self.db, self.collection)
+
+	def __setstate__(state):
+		"""For unpickling"""
+		self.__init__(*state)
+
+	def load(self, kmer_set):
+		"""Load a single k-mer set vector from the collection"""
+		assert kmer_set.collection_id == self.collection.id
+
+		file_path = self.db._get_path(
+			'kmer_collections',
+			self.collection.directory,
+			kmer_set.filename
+		)
+
+		with open(file_path, 'rb') as fh:
+			return self.format.load(fh, kmer_set)
+
+	def load_array(self, kmer_sets, out=None, dtype=None):
+
+		if dtype is None:
+			dtype = np.dtype(bool)
+
+		if out is None:
+			spec = KmerSpec(self.collection.k, self.collection.prefix)
+			out = np.ndarray((len(kmer_sets), spec.idx_len), dtype=dtype)
+
+		for i, kmer_set in enumerate(kmer_sets):
+			out[i, :] = self.load(kmer_set)
+
+		return out
+
+
+class KmerSetAdder(object):
+
+	def __init__(self, db, collection):
+		self.db = db
+		self.collection = collection
+		self.format = kmer_storage_formats[collection.format](collection)
+
+	def __call__(self, vec, genome, **kwargs):
+
+		# Destination for file
+		filename = 'gen-{}.npy'.format(genome.id)
+		store_path = self.db._get_path(
+			'kmer_collections',
+			self.collection.directory,
+			filename
+		)
+
+		# Create k-mer set
+		kmer_set = KmerSet(
+			collection_id=self.collection.id,
+			genome_id=genome.id,
+			dtype_str=str(vec.dtype),
+			count=(vec > 0).sum(),
+			filename=filename,
+			**kwargs
+		)
+
+		# Write to file
+		with open(store_path, 'wb') as fh:
+			self.format.store(fh, vec, kmer_set)
+
+		# Try adding the set
+		try:
+			session = self.db._ExpireSession()
+			session.add(kmer_set)
+			session.commit()
+
+		# On error, remove the file
+		except Exception as e:
+			os.unlink(store_path)
+			raise
+
+		return kmer_set
