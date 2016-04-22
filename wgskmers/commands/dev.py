@@ -9,6 +9,7 @@ from alembic import command as alembic_command
 from alembic.migration import MigrationContext
 from alembic.autogenerate import compare_metadata
 
+import wgskmers
 from wgskmers import database
 from wgskmers.database.upgrade import get_alembic_config, get_sqlite_path
 from .util import with_db, choose_db_path
@@ -27,7 +28,8 @@ def shell(db=None):
 	import IPython
 
 	import wgskmers
-	from wgskmers import kmers, models, database, config, util
+	from wgskmers import kmers, database, config, util
+	from wgskmers.database import models
 
 	ns = dict(
 		wgskmers=wgskmers,
@@ -46,6 +48,25 @@ def shell(db=None):
 		ns['session'] = ns['db'].get_session()
 
 	IPython.start_ipython(argv=[], user_ns=ns)
+
+@dev_group.command(short_help='Remove .pyc files in project')
+@click.option('-a', '--all', 'clean_all', is_flag=True,
+              help='Remove all .pyc files instead of just those without a '
+                   'corresponding .py file')
+def clean(clean_all=False):
+	"""
+	Remove all .pyc files in project, by default only if they lack a
+	corresponding source file.
+	"""
+	src_path = os.path.dirname(wgskmers.__file__)
+
+	for dirpath, dirname, filenames in os.walk(src_path):
+		for filename in filenames:
+			if filename.endswith('.pyc'):
+				if clean_all or (filename[-4:] + '.py') in filenames:
+					file_path = os.path.join(dirpath, filename)
+					click.echo('removed ' + file_path)
+					os.unlink(file_path)
 
 
 @dev_group.group(short_help='Alembic database migration tools')
