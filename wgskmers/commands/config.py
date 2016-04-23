@@ -1,11 +1,10 @@
 """"""
 
-import os
+import shutil
 
 import click
 
 from wgskmers import config
-
 
 
 @click.group(name='config')
@@ -18,16 +17,16 @@ def config_group():
 def locate():
 	"""Print config directory path"""
 	if config.config_exists():
-		click.echo(config.config_file_path)
+		click.echo(config.config_dir)
 	else:
-		click.secho('Config file does not exist', fg='red')
+		click.secho('Config directory does not exist', err=True)
 
 
 @config_group.command()
 def reset():
-	"""Reset the global config file"""
+	"""Reset the global config file(s)"""
 	if not config.config_exists():
-		click.secho('Config file does not exist', fg='red')
+		click.secho('Config directory does not exist', err=True)
 		return
 
 	click.confirm(
@@ -36,21 +35,14 @@ def reset():
 		'The databases themselves will be left as-is. Continue?',
 		abort=True
 	)
-	os.unlink(config.config_file_path)
-	click.echo('Config file reset')
+	shutil.rmtree(config.config_dir)
+	click.echo('Configuration reset')
 
 
-@config_group.command(name='print')
-def print_config():
-	"""Print contents of the config file"""
+@config_group.command(name='open')
+def open_config():
+	"""Open the config directory"""
 	if config.config_exists():
-		with open(config.config_file_path) as fh:
-			click.echo(fh.read())
+		click.launch(config.config_dir)
 	else:
-		click.secho('Config file does not exist', fg='red')
-
-
-@config_group.command(short_help='Open the config file for editing')
-def manual_edit():
-	"""Open the config file for editing. Use this at your own risk!"""
-	click.edit(filename=config.config_file_path)
+		click.secho('Config directory does not exist', err=True)

@@ -7,6 +7,7 @@ from textwrap import dedent
 import click
 
 from wgskmers import database
+from wgskmers.config import get_config
 
 
 choose_db_doc = dedent("""
@@ -29,6 +30,8 @@ def choose_db(pass_opts=False, pass_context=False):
 
 		@wraps(func)
 		def wrapper(ctx, *args, **kwargs):
+
+			config = get_config()
 
 			default_db = kwargs.get('default_db', None)
 			db_name = kwargs.get('db_name', None)
@@ -57,7 +60,7 @@ def choose_db(pass_opts=False, pass_context=False):
 			elif db_name is not None:
 				db_name = db_name.lower()
 				try:
-					db_path = database.get_registered_dbs()[db_name]
+					db_path = config.get_registered_dbs()[db_name]
 				except KeyError:
 					raise click.ClickException(
 						'Database "{}" not found'
@@ -75,7 +78,7 @@ def choose_db(pass_opts=False, pass_context=False):
 				ctx.obj['db_auto'] = method
 
 			# Open database and add to context
-			ctx.obj['db'] = database.Database.open(db_path)
+			ctx.obj['db'] = database.open_database(db_path)
 
 			# Call wrapped func
 			return func(*args, **kwargs)
@@ -168,6 +171,8 @@ def choose_db_path(pass_opts=False):
 		@wraps(func)
 		def wrapper(*args, **kwargs):
 
+			config = get_config()
+
 			path = kwargs.get('path', None)
 			db_name = kwargs.get('db_name', None)
 			default_db = kwargs.get('default_db', None)
@@ -182,7 +187,7 @@ def choose_db_path(pass_opts=False):
 
 			elif db_name is not None:
 				try:
-					db_path = database.get_registered_dbs()[db_name]
+					db_path = config.get_registered_dbs()[db_name]
 				except KeyError:
 					raise click.ClickException(
 						'No database registered with name {}'

@@ -28,8 +28,11 @@ def shell(db=None):
 	import IPython
 
 	import wgskmers
-	from wgskmers import kmers, database, config, util
+	from wgskmers import kmers, database, util
 	from wgskmers.database import models
+
+	from wgskmers.config import get_config
+	config = get_config()
 
 	ns = dict(
 		wgskmers=wgskmers,
