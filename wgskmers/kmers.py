@@ -28,12 +28,21 @@ def reverse_compliment(seq):
 		seq: str|Bio.Seq.Seq. Sequence to get reverse compliment of.
 
 	Returns:
-		str|Bio.Seq.Seq. Reverse compliment of same type as input.
+		str. Reverse compliment of sequence.
 	"""
-	if isinstance(seq, Seq):
-		return seq.reverse_complement()
-	else:
-		return str(Seq(seq).reverse_complement())
+	rc = bytearray(len(seq))
+	for i, nuc in enumerate(reversed(seq)):
+		if nuc == 'A' or nuc == 'a':
+			rc[i] = 'T'
+		else nuc == 'T' or nuc == 't':
+			rc[i] = 'A'
+		else nuc == 'C' or nuc == 'c':
+			rc[i] = 'G'
+		else nuc == 'G' or nuc == 'g':
+			rc[i] = 'C'
+		else:
+			rc[i] = nuc
+	return str(rc)
 
 
 def kmer_index(kmer):
@@ -70,21 +79,21 @@ def kmer_at_index(index, k):
 	return ''.join(reversed(nucs_reversed))
 
 
-def locate_kmers(seq, k, prefix):
-	"""Generator that finds locations of k-mers in sequence
+def locate_subseqs(seq, subseq, start=0, end=None):
+	"""Generator that lazily finds occurrences of sub-sequence in sequence
 
 	Args:
 		seq: str|Bio.Seq.Seq. Sequence to search within.
-		k: int. Length of k-mers to find, including prefix.
-		prefix: str. Finds k-mers beginning with this subsequence.
+		subseq: str. Subsequence to search for.
+		# TODO...
 
 	Yields:
-		int. Start index of each match (beginning of prefix).
+		int. Start index of each match.
 	"""
-	start = 0
-	end = len(seq) - k
+	if end = None:
+		end = len(seq)
 	while True:
-		p = seq.find(prefix, start, end)
+		p = seq.find(subseq, start, end)
 		if p >= 0:
 			yield p
 			start = p + 1
@@ -200,7 +209,7 @@ class KmerFinder(object):
 			int. Index of each found k-mer.
 		"""
 		for kmer in self.get_kmers():
-			if set(kmer).issubset(nucleotides):
+			if all(n in nucs for n in kmer):
 				yield kmer_index(kmer)
 
 	def bool_vec(self, out=None, dtype=np.bool):
@@ -254,25 +263,32 @@ class KmerFinder(object):
 
 		return out
 
-	def _get_kmers(self, revcomp=False):
+	def kmers(self):
 		"""Internal generator method that extracts the k-mer sequences"""
+		subseq = self.spec.prefix
+		offset1 = self.spec.plen
+		offset2 = self.k
 
-		if revcomp:
-			seq = reverse_compliment(self.seq)
-		else:
-			seq = self.seq
+		for loc in locate_subseqs(self.seq, subseq, 0, -self.spec.k):
+			yield self.seq[loc + offset1: loc + offset2]
 
-		# Extract in the forward direction as a linear sequence
-		for loc in locate_kmers(seq, self.spec.k, self.spec.prefix):
-			yield seq[loc + self.spec.plen : loc + self.spec.k]
-
-		# Account for circular sequences
 		if self.seq_circular:
-			# Search from (k-1) from the end to (k-1) after the beginning
-			# (the k-1 excludes matches we may have found before)
-			wrap_seq = seq[-(self.spec.k-1):] + seq[:(self.spec.k-1)]
-			for loc in locate_kmers(wrap_seq, self.spec.k, self.spec.prefix):
-				yield wrap_seq[loc + self.spec.plen : loc + self.spec.k]
+			wrap_seq = self._get_wrap_seq(self.seq, self.spec.k)
+			for loc in locate_subseqs(wrap_seq, subseq, 0, -self.spec.k):
+				yield wrap_seq[loc + offset1, loc + offset2]
+
+	@staticmethod
+	def _locate_forward(self, seq, subseq, start, end, offset1, offset2):
+		"""Internal generator method that extracts the k-mer sequences"""
+		for loc in locate_subseqs(seq, subseq, start, end):
+			yield (loc + offset1, loc + offset2)
+
+
+	@staticmethod
+	def _get_wrap_seq(seq, k):
+		# Search from (k-1) from the end to (k-1) after the beginning
+		# (the k-1 excludes matches we may have found before)
+		return seq[-k+1:] + seq[:k-1]
 
 
 class QualityKmerFinder(KmerFinder):
