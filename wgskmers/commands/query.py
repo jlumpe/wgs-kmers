@@ -77,7 +77,7 @@ def matches_to_csv(fh, queries, refs, metrics, scores, topn):
 
 		writer.writerow(dict(
 			query_file=match.query,
-			metric=match.metric.name,
+			metric=match.metric.title,
 			rank=match.rank + 1,
 			score=match.score,
 			description=genome.description,
@@ -98,7 +98,7 @@ def print_matches(queries, refs, metrics, scores, topn):
 
 			metric = query_metrics[metric_name]
 
-			click.echo('\nTop {} scores by {}:'.format(topn, metric.name))
+			click.echo('\nTop {} scores by {}:'.format(topn, metric.title))
 
 			scores_slice = scores[j:j+1, :, i:i+1]
 
