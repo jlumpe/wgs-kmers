@@ -64,10 +64,10 @@ class GenomeSet(Base, TrackChangesMixin):
 	                       backref='genome_sets')
 
 	def __repr__(self):
-		return '<{} id={} desc="{}">'.format(
+		return '<{} id={} name="{}">'.format(
 			type(self).__name__,
 			self.id,
-			self.description,
+			self.name,
 		)
 
 
