@@ -182,8 +182,9 @@ class Database(object):
 		if isinstance(file_, basestring):
 			shutil.copyfile(file_, store_path)
 		else:
+			contents = file_.read()
 			with open(store_path, 'w'):
-				store_path.write(file_.read())
+				store_path.write(contents)
 
 		# Try adding the genome
 		try:

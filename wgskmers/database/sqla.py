@@ -81,7 +81,10 @@ class MutableJsonCollection(Mutable):
 	def _transform_element(self, elem):
 		"""Transforms python types into MutableJsonCollection where possible"""
 
-		if isinstance(elem, collections.Mapping):
+		if isinstance(elem, MutableJsonCollection):
+			return elem
+
+		elif isinstance(elem, collections.Mapping):
 			return MutableJsonDict(elem, parent=self)
 
 		elif isinstance(elem, collections.Sequence):
