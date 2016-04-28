@@ -131,7 +131,7 @@ def calc(ctx, db, collection_id):
 
 		# Go through the records
 		for record in records:
-			finder = KmerFinder(spec, record.seq)
+			finder = KmerFinder(spec, record.seq, revcomp=True)
 
 			# If assembled, get boolean vector
 			if genome.is_assembled:
