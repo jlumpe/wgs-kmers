@@ -75,10 +75,13 @@ def ezutils(util, *args, **kwargs):
 		return response
 		
 
-def ids_for_accession(acc, db):
+def ids_for_accession(acc, db, field='Accession'):
 	"""Query nucleotide GI numbers by accession"""
 
-	term = '"{}"[Accession]'.format(acc)
+	if field is not None:
+		term = '"{}"[{}]'.format(acc, field)
+	else:
+		term = acc
 
 	result = ezutils('esearch', db=db, retmode='json', term=term)
 	return map(int, result['esearchresult']['idlist'])
