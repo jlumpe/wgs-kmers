@@ -84,14 +84,14 @@ class MutableJsonCollection(Mutable):
 		if isinstance(elem, MutableJsonCollection):
 			return elem
 
+		elif isinstance(elem, jsonable_scalars):
+			return elem
+
 		elif isinstance(elem, collections.Mapping):
 			return MutableJsonDict(elem, parent=self)
 
 		elif isinstance(elem, collections.Sequence):
 			return MutableJsonList(elem, parent=self)
-
-		elif isinstance(elem, jsonable_scalars):
-			return elem
 
 		else:
 			raise TypeError('{} is not a JSONable type'.format(type(elem)))
