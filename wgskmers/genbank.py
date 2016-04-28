@@ -104,9 +104,21 @@ def genome_attrs_from_gi(id, db):
 	summary = get_summary(id=id, db=db)
 
 	attrs['gb_summary'] = summary
-	attrs['gb_acc'] = summary['accessionversion']
-	attrs['organism'] = summary['organism']
-	attrs['description'] = '[{accessionversion}] {title}'.format(**summary)
+
+	if 'accessionversion' in summary:
+		attrs['gb_acc'] = summary['accessionversion']
+	elif 'assemblyaccession' in summary:
+		attrs['gb_acc'] = summary['assemblyaccession']
+
+	try:
+		attrs['organism'] = summary['organism']
+	except KeyError:
+		pass
+
+	try:
+		attrs['description'] = '[{}] {}'.format(attrs['gb_acc'], summary['title'])
+	except KeyError:
+		pass
 
 	return attrs
 
