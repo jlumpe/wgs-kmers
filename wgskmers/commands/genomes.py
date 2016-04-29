@@ -2,7 +2,6 @@
 
 import os
 import re
-from glob import glob
 from collections import OrderedDict
 from textwrap import dedent
 from csv import DictWriter, DictReader
@@ -26,6 +25,16 @@ def parse_bool(string):
 		return False
 	else:
 		raise ValueError(string)
+
+
+import_exts = ['.fasta', '.fna']
+
+def find_seq_files(directory):
+	files = []
+	for f in os.listdir(directory):
+		if os.path.isfile(f) and any(f.endswith(e) for e in import_exts):
+			files.append(os.path.join(directory, f))
+	return files
 
 
 def guess_fasta_attrs(path):
@@ -61,9 +70,12 @@ def guess_fasta_attrs(path):
 					attrs['gb_acc'] = acc.strip()
 
 					try:
-						attrs['gb_gi'] = int(gi_str)
+						attrs['gb_id'] = int(gi_str)
 					except ValueError:
 						pass
+
+	if 'description' not in attrs:
+		attrs['description'] = os.path.splitext(os.path.basename(path))[0]
 
 	return attrs
 
@@ -71,7 +83,7 @@ def guess_fasta_attrs(path):
 genome_import_attrs = OrderedDict([
 	('description', str),
 	('gb_db', str),
-	('gb_gi', int),
+	('gb_id', int),
 	('gb_acc', str),
 	('gb_taxid', int),
 	('is_assembled', parse_bool),
@@ -156,7 +168,7 @@ def parse_import_csv(fh, db):
 			)
 
 		# Check uniqueness of columns
-		for uq_col in ['description', 'gb_gi', 'gb_acc']:
+		for uq_col in ['description', 'gb_id', 'gb_acc']:
 			val = attrs[uq_col]
 			if val is None:
 				continue
@@ -244,7 +256,7 @@ def import_genomes(ctx, db, directory, csv_out=None, existing=None):
 			
 			# Find fasta files in directory
 			directory = os.path.abspath(directory)
-			for path in glob(os.path.join(directory, '*.fasta')):
+			for path in tqdm(find_seq_files(directory), desc='Checking files'):
 
 				# Guess attributes
 				attrs = guess_fasta_attrs(path)
