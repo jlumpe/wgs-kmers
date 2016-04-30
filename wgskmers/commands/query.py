@@ -2,79 +2,130 @@
 
 import os
 import logging
+from csv import DictWriter
+from collections import namedtuple
 
 import click
-from tqdm import tqdm
 import numpy as np
 
 from wgskmers.database import KmerSetCollection
-from wgskmers.kmers import KmerSpec, KmerFinder, QualityKmerFinder
-from wgskmers.query import query_metrics
-from .util import with_db, ProgressSeqParser
+from wgskmers.kmers import KmerSpec
+from wgskmers.query import query_metrics, mp_query
+from wgskmers.parse import infer_format, find_seq_files, parse_to_array
+from wgskmers.util import kwargs_finished
+from wgskmers import genbank
+from .util import with_db
 
 
 logger = logging.getLogger()
 
 
-def kmers_from_records(records, spec, quality_threshold=None):
-	"""Generator yielding KmerFinders for a set of sequence records.
+QueryMatch = namedtuple('QueryMatch', ['query', 'ref', 'metric', 'rank', 'score'])
 
-	Args:
-		records: iterable of Bio.SeqRecord.SeqRecord, as output from
-			Bio.SeqIO.parse. Records to find k-mers in.
-		spec. KmerSpec. Spec defining k-mers to search for.
-		quality_threshold: numeric|None. If not None, get quality scores from
-			records and filter out k-mers containing score below this value.
+def top_matches(queries, refs, metrics, scores, n):
+	for i, query in enumerate(queries):
+		for j, metric_name in enumerate(metrics):
 
-	Yields:
-		KmerFinder or QualityKmerFinder, depending if quality_threshold was
-			None or not.
-	"""
+			metric = query_metrics[metric_name]
 
-	# Parse file and iterate over sequences
-	for record in records:
+			scores_slice = scores[j, :, i]
 
-		# Upper case for search
-		seq = record.seq.upper()
+			# Reverse order for distances
+			if metric.is_distance:
+				best_idx = np.argsort(scores_slice)
+			else:
+				best_idx = np.argsort(-scores_slice)
 
-		# No quality
-		if quality_threshold is None:
-			yield spec.find(seq, revcomp=True)
+			for rank, idx in enumerate(best_idx[:n]):
+				yield QueryMatch(
+					query=query,
+					ref=refs[idx],
+					metric=metric,
+					rank=rank,
+					score=scores_slice[idx],
+				)
 
-		# With quality info
+def matches_to_csv(fh, queries, refs, metrics, scores, topn):
+
+	writer = DictWriter(fh, [
+		'query_file',
+		'metric',
+		'rank',
+		'score',
+		'description',
+		'organism',
+		'set',
+		'accession',
+		'database',
+		'link',
+	])
+	writer.writeheader()
+
+	for match in top_matches(queries, refs, metrics, scores, topn):
+
+		genome = match.ref.genome
+
+		if genome.gb_db is not None:
+			if genome.gb_acc is not None:
+				link = genbank.get_record_url(genome.gb_acc, genome.gb_db)
+			elif genome.gb_id is not None:
+				link = genbank.get_record_url(genome.gb_id, genome.gb_db)
+			else:
+				link = None
 		else:
-			phred_scores = record.letter_annotations['phred_quality']
-			yield spec.find_quality(seq, revcomp=True, quality=phred_scores,
-			                        threshold=quality_threshold)
+			link = None
+
+		writer.writerow(dict(
+			query_file=match.query,
+			metric=match.metric.name,
+			rank=match.rank + 1,
+			score=match.score,
+			description=genome.description,
+			organism=genome.organism,
+			set=genome.genome_sets[0].name if genome.genome_sets else None,
+			accession=genome.gb_acc,
+			database=genome.gb_db,
+			link=link,
+		))
 
 
-def infer_format(path):
-	"""Infers format for sequence file, returns format argument to
-	Bio.SeqIO.parse
+def print_matches(queries, refs, metrics, scores, topn):
+	for i, query in enumerate(queries):
 
-	All it does is check the extension.
-	"""
-	ext = os.path.splitext(path)[1]
-	if ext in ['.fasta', '.fastq']:
-		return ext[1:]
-	else:
-		return None
+		click.echo('\n\n>{}'.format(query))
+
+		for j, metric_name in enumerate(metrics):
+
+			metric = query_metrics[metric_name]
+
+			click.echo('\nTop {} scores by {}:'.format(topn, metric.name))
+
+			scores_slice = scores[j:j+1, :, i:i+1]
+
+			for match in top_matches([query], refs, [metric_name], scores_slice, topn):
+				click.echo('{} {}'.format(match.score, match.ref.genome.description))
 
 
 @click.command(name='query')
 
-@click.option('-q', '--q-threshold', type=int, required=False,
+@click.option('-q', '--q-threshold', type=int,
 	help='Filter k-mers in query containing PHRED scores below this value')
-@click.option('-c', '--c-threshold', type=int, required=False, default=1,
+@click.option('-c', '--c-threshold', type=int, default=1,
 	help='Filter k-mers in query occuring less than this many times')
 @click.option('-f', '--format', default=None,
 	type=click.Choice(['fasta', 'fastq', 'fastq-sanger', 'fastq-solexa',
 	                   'fastq-illumina']),
 	help='File format, as argument to Bio.SeqIO.parse. If omitted, will infer '
 	     'from extension of first file encountered.')
-@click.option('-b', '--batch', is_flag=True, help='Run in batch mode.')
-@click.option('-n', '--n-results', type=int, default=25,
+@click.option('-m', '--metric', type=click.Choice(query_metrics.keys() + ['all']),
+              default='all', help='Query metric to use')
+@click.option('-n', '--n-results', type=int, default=10,
               help='Number of results to return, sorted by best')
+@click.option('--csv', type=click.File('w'), help='Write output to csv file')
+@click.option('--no-check-ext', is_flag=True,
+              help='Don\'t filter batch mode files by sequence file extension')
+@click.option('--no-print', is_flag=True,
+              help='Don\'t print results to stdout')
 @click.argument('collection_id', type=int)
 @click.argument('src', type=click.Path(exists=True))
 @with_db(choose=True)
@@ -87,8 +138,11 @@ def query_command(ctx, db, collection_id, src, **kwargs):
 	q_threshold = kwargs.pop('q_threshold', None)
 	c_threshold = kwargs.pop('c_threshold')
 	file_format = kwargs.pop('format', None)
-	batch_mode = kwargs.pop('batch', False)
+	metric_choice = kwargs.pop('metric', 'all')
 	n_results = kwargs.pop('n_results')
+	check_ext = not kwargs.pop('no_check_ext', False)
+	no_print = kwargs.pop('no_print', False)
+	csv_out = kwargs.pop('csv', None)
 
 	# Get collection
 	session = db.get_session()
@@ -99,66 +153,51 @@ def query_command(ctx, db, collection_id, src, **kwargs):
 			.format(collection_id)
 		)
 
-	# Reference sets
-	ref_sets = collection.kmer_sets.all()
-
 	# Kmer spec
 	spec = KmerSpec(k=collection.k, prefix=collection.prefix)
 
-	# Get format
-	if file_format is None:
-		file_format = infer_format(src)
-		if file_format is None:
-			raise ValueError("Couldn't infer format for {}"
-				.format(src))
-		logger.debug('Inferring format "{}" from {}'
-		             .format(file_format, src))
-
-	# Allocate array for results
-	metrics = query_metrics.values()
-	scores = np.ndarray((len(ref_sets), len(metrics)))
-
-	# Parse with progress bar
-	records = ProgressSeqParser(src, fmt=file_format,
-	                            desc='Parsing source file')
-
-	# Find the k-mers with quality info
-	if q_threshold is not None:
-		finders = kmers_from_records(records, spec,
-		                             quality_threshold=q_threshold)
+	# Get input files
+	if os.path.isdir(src):
+		query_files = find_batch_files(src, check_ext=check_ext)
+		if not query_files:
+			raise click.ClickException('No sequence files found in {}'.format(src))
 
 	else:
-		# Just the k-mers themselves
-		finders = kmers_from_records(records, spec)
+		query_files = [src]
 
-	# Get counts
-	counts_vec = None
-	for finder in finders:
-		counts_vec = finder.counts_vec(out=counts_vec)
+	# Get format
+	if file_format is None:
+		file_format = infer_format(query_files[0])
+		if file_format is None:
+			raise ValueError("Couldn't infer format for {}"
+				.format(query_files[0]))
+		logger.debug('Inferring format "{}" from {}'
+		             .format(file_format, query_files[0]))
 
-	# Count threshold
-	query_vec = counts_vec >= c_threshold
+	# Get the query vectors
+	pbar_args = dict(desc='Parsing query files', unit=' file(s)', leave='False')
+	query_array = parse_to_array(query_files, spec, progress=pbar_args,
+			                     q_threshold=q_threshold,
+			                     c_threshold=c_threshold)
 
-	# Now loop through reference kmer sets
-	loader = db.get_kmer_loader(collection)
-	iterator = tqdm(ref_sets, desc='Querying reference genomes',
-	                total=len(ref_sets))
-	for i, kset in enumerate(iterator):
+	# Reference sets
+	ref_sets = collection.kmer_sets.all()
 
-		ref_vec = loader.load(kset) > 0
+	# Metrics
+	if metric_choice == 'all':
+		metric_names = query_metrics.keys()
+	else:
+		metric_names = [metric_choice]
 
-		for j, metric in enumerate(metrics):
-			scores[i, j] = metric(query_vec, ref_vec)
+	# Make the query
+	scores = mp_query(query_array, db, collection, ref_sets, metric_names,
+	                  progress=True)
 
 	# Print the scores
-	for i, metric in enumerate(metrics):
+	if not no_print:
+		print_matches(query_files, ref_sets, metric_names, scores, n_results)
 
-		best_idx =  scores[:, i].argsort()
-		if not metric.is_distance:
-			best_idx = best_idx[::-1]
-
-		click.echo('\nTop {} scores by {}:'.format(n_results, metric.name))
-
-		for idx in best_idx[:n_results]:
-			click.echo('{} {}'.format(scores[idx, i],
-				ref_sets[idx].genome.description))
+	# Scores to csv
+	if csv_out is not None:
+		matches_to_csv(csv_out, query_files, ref_sets, metric_names, scores,
+		               n_results)
