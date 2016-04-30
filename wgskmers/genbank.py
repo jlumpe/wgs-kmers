@@ -13,6 +13,9 @@ from Bio import Entrez
 Entrez.email = 'mjlumpe@gmail.com' # Don't abuse this...
 
 
+ncbi_url = 'http://www.ncbi.nlm.nih.gov'
+
+
 # Regular expressions to match accession numbers
 # http://www.ncbi.nlm.nih.gov/Sequin/acc.html
 accession_re = re.compile(r'[A-Z]+_?\d+(\.\d+)?')
@@ -147,3 +150,19 @@ def fetch_fasta(id, db, **kwargs):
 
 	else:
 		raise ValueError('DB not supported')
+
+
+db_paths = dict(
+	assembly='assembly',
+	nuccore='nuccore',
+)
+
+def get_record_url(acc_or_id, db):
+	"""Gets URL for a genbank record by database and either accession or id"""
+
+	try:
+		db_path = db_paths[db]
+	except KeyError:
+		raise ValueError('Don\'t know how to get url for db {}'.format(db))
+
+	return '/'.join([ncbi_url, str(acc_or_id), db])
