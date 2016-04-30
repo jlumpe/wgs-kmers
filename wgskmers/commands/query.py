@@ -1,4 +1,4 @@
-""""""
+"""Functions for querying against reference sequences in database"""
 
 import os
 import logging
@@ -9,52 +9,11 @@ import numpy as np
 
 from wgskmers.database import KmerSetCollection
 from wgskmers.kmers import KmerSpec, KmerFinder, QualityKmerFinder
+from wgskmers.query import query_metrics
 from .util import with_db, ProgressSeqParser
 
 
 logger = logging.getLogger()
-
-
-class QueryMetric(object):
-	def __init__(self, name, func, is_distance):
-		self.name = name
-		self.func = func
-		self.is_distance = is_distance
-
-	def __call__(self, query_vec, ref_vec):
-		return self.func(query_vec, ref_vec)
-
-
-
-query_metrics = dict()
-
-def metric(name, is_distance):
-	def decorator(func):
-		km = QueryMetric(name, func, is_distance)
-		query_metrics[func.__name__] = km
-		return km
-	return decorator
-
-
-@metric('Hamming distance', is_distance=True)
-def hamming(query, ref):
-	return (query != ref).sum()
-
-@metric('Jaccard Index', is_distance=False)
-def jaccard(query, ref):
-	d = float((query | ref).sum())
-	if d > 0:
-		return (query & ref).sum() / d
-	else:
-		return 0
-
-@metric('Asymmetrical Jaccard', is_distance=False)
-def asym_jacc(query, ref):
-	d = float(ref.sum())
-	if d > 0:
-		return (query & ref).sum() / d
-	else:
-		return 0
 
 
 def kmers_from_records(records, spec, quality_threshold=None):
