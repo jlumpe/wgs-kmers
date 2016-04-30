@@ -1,5 +1,8 @@
 """"""
 
+import multiprocessing as mp
+from itertools import izip
+
 import click
 import sqlalchemy as sqla
 from tqdm import tqdm
@@ -9,6 +12,39 @@ from .util import choose_db, with_db
 from wgskmers.database import Genome, KmerSetCollection, KmerSet
 from wgskmers.kmers import nucleotides, KmerFinder, KmerSpec
 from wgskmers.database.store import kmer_storage_formats
+import wgskmers.multiprocess as kmp
+
+
+class RefCalculator(object):
+
+	@classmethod
+	def init(cls, db, spec):
+		cls.db = db
+		cls.spec = spec
+
+	@classmethod
+	def calc_ref(cls, genome):
+
+		# Parse it
+		with cls.db.open_genome(genome) as fh:
+			records = SeqIO.parse(fh, genome.file_format)
+
+			# Vector to store k-mers
+			vec = None
+
+			# Go through the records
+			for record in records:
+				finder = cls.spec.find(record.seq, revcomp=True)
+
+				# If assembled, get boolean vector
+				if genome.is_assembled:
+					vec = finder.bool_vec(out=vec)
+
+				# Otherwise, get counts (why not)
+				else:
+					vec = finder.counts_vec(out=vec)
+
+			return vec
 
 
 @click.group(name='refs',
@@ -118,28 +154,21 @@ def calc(ctx, db, collection_id):
 	genome_query = session.query(Genome).filter(
 		~Genome.kmer_sets.any(KmerSet.collection == collection)
 	)
+	genomes = genome_query.all()
 
-	# Iterate through genomes
+	# Create pool
+	init_args = (db, spec)
+	pool = mp.Pool(initializer=RefCalculator.init, initargs=init_args,
+	               maxtasksperchild=100)
+
+	kmp.enable_method_pickling()
+
+	# Start the workers
+	results = pool.imap(RefCalculator.calc_ref, genomes)
+
+	# Iterate through results
 	added, errors = 0, 0
-	for genome in tqdm(genome_query.all()):
-
-		# Parse it
-		records = SeqIO.parse(db.open_genome(genome), genome.file_format)
-
-		# Vector to store k-mers
-		vec = None
-
-		# Go through the records
-		for record in records:
-			finder = KmerFinder(spec, record.seq, revcomp=True)
-
-			# If assembled, get boolean vector
-			if genome.is_assembled:
-				vec = finder.bool_vec(out=vec)
-
-			# Otherwise, get counts (why not)
-			else:
-				vec = finder.counts_vec(out=vec)
+	for vec, genome in tqdm(izip(results, genomes), total=len(genomes)):
 
 		# Try adding the set
 		try:
