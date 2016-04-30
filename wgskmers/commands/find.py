@@ -12,8 +12,9 @@ import click
 from tqdm import tqdm
 from Bio import SeqIO
 
-from .util import ProgressSeqParser, iterator_empty
 from wgskmers.kmers import KmerSpec, nucleotides
+from wgskmers.parse import ProgressSeqParser, find_seq_files, infer_format
+from wgskmers.util import iterator_empty
 
 
 logger = logging.getLogger()
@@ -165,31 +166,6 @@ def make_dest_path(src_path, dest_dir, ext='.txt'):
 	return os.path.join(dest_dir, src_name + ext)
 
 
-def infer_format(path):
-	"""Infers format for sequence file, returns format argument to
-	Bio.SeqIO.parse
-
-	All it does is check the extension.
-	"""
-	ext = os.path.splitext(path)[1]
-	if ext in ['.fasta', '.fastq']:
-		return ext[1:]
-	else:
-		return None
-
-
-def find_batch_files(directory):
-	"""Finds source files in directory for batch processing"""
-	paths = []
-
-	for fname in os.listdir(directory):
-		path = os.path.join(directory, fname)
-		if os.path.isfile(path):
-			paths.append(path)
-
-	return paths
-
-
 #-----------------------------------------------------------------------------
 # Command
 #-----------------------------------------------------------------------------
@@ -286,7 +262,7 @@ def find_command(src, dest, prefix, k, **kwargs):
 			raise ValueError('Must give destination directory in batch mode')
 
 		# Find files in source directory (raises OSError if doesn't exist)
-		src_paths = find_batch_files(src)
+		src_paths = find_seq_files(src)
 		if not src_paths:
 			raise RuntimeError('No files found in {}'.format(src))
 
@@ -327,7 +303,7 @@ def find_command(src, dest, prefix, k, **kwargs):
 	# Should be ok, loop over the files
 	paths_iter = zip(src_paths, dest_paths)
 	if batch_mode and show_progress:
-		paths_iter = tqdm(paths_iter, unit='files')
+		paths_iter = tqdm(paths_iter, unit='files', leave=False)
 
 	for src_path, dest_path in paths_iter:
 		
@@ -343,7 +319,7 @@ def find_command(src, dest, prefix, k, **kwargs):
 
 		# Wrap parse iterator in progress bar
 		if show_progress:
-			records = ProgressSeqParser(src_path, fmt=file_format, nested=True)
+			records = ProgressSeqParser(src_path, fmt=file_format, leave=False)
 		else:
 			records = SeqIO.parse(src_path, file_format)
 
