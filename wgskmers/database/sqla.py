@@ -61,6 +61,14 @@ class MutableJsonCollection(Mutable):
 		else:
 			self._parent = None
 
+	def __getstate__(self):
+		"""For pickling"""
+		return self.as_builtin()
+
+	def __setstate__(state):
+		"""For unpickling"""
+		self.__init__(state)
+
 	def changed(self):
 		super(MutableJsonCollection, self).changed()
 
@@ -95,6 +103,16 @@ class MutableJsonCollection(Mutable):
 
 		else:
 			raise TypeError('{} is not a JSONable type'.format(type(elem)))
+
+	@classmethod
+	def _element_as_builtin(cls, elem):
+		"""Converts an element to builtin type"""
+		if isinstance(elem, MutableJsonCollection):
+			return elem.as_builtin()
+
+		else:
+			return elem
+
 
 
 class MutableJsonList(MutableJsonCollection, collections.MutableSequence):
@@ -134,7 +152,7 @@ class MutableJsonList(MutableJsonCollection, collections.MutableSequence):
 		self.changed()
 
 	def as_builtin(self):
-		return self._list
+		return map(self._element_as_builtin, self._list)
 
 	@classmethod
 	def coerce(cls, key, value):
@@ -184,7 +202,8 @@ class MutableJsonDict(MutableJsonCollection, collections.MutableMapping):
 		return repr(self._dict)
 
 	def as_builtin(self):
-		return self._dict
+		return {k: self._element_as_builtin(v) for k, v
+		        in self._dict.iteritems()}
 
 	@classmethod
 	def coerce(cls, key, value):

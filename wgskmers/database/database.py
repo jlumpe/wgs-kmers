@@ -142,6 +142,11 @@ def unregister_db(name):
 
 
 class Database(object):
+	"""Stores genome files and pre-calculated k-mer sets, plus metadata.
+
+	This class is pickleable, and is intended to be able to be used with
+	multiprocessing.
+	"""
 
 	_rel_paths = {
 		'sqlite': 'data.db',
@@ -159,6 +164,14 @@ class Database(object):
 		self._Session = sessionmaker(bind=self.engine)
 		self._ExpireSession = sessionmaker(bind=self.engine,
 		                                   expire_on_commit=False)
+
+	def __getstate__(self):
+		"""For pickling"""
+		return self.directory
+
+	def __setstate__(directory):
+		"""For unpickling"""
+		self.__init__(directory)
 
 	def get_session(self):
 		"""Create a new SQLAlchemy session"""
@@ -241,66 +254,10 @@ class Database(object):
 		return collection
 
 	def store_kmer_sets(self, collection):
-		return Database.KmerSetAdder(self, collection)
+		return KmerSetAdder(self, collection)
 
-	def load_kmer_sets(self, collection, kmer_sets, **kwargs):
-
-		stack = kwargs.pop('stack', False)
-		dtype = kwargs.pop('dtype', None)
-		wrap_iter = kwargs.pop('wrap_iter', None)
-		kwargs_finished(kwargs)
-
-		fmt = kmer_storage_formats[collection.format](collection)
-
-		if stack:
-			spec = KmerSpec(collection.k, collection.prefix)
-			if dtype is None:
-				dtype = np.dtype(bool)
-			array = np.ndarray((len(kmer_sets), spec.idx_len), dtype=dtype)
-
-		else:
-			vecs = []
-
-
-		sets_iter = enumerate(kmer_sets)
-		if wrap_iter is not None:
-			sets_iter = wrap_iter(list(sets_iter))
-
-		for i, kmer_set in sets_iter:
-
-			file_path = self._get_path(
-				'kmer_collections',
-				kmer_set.collection.directory,
-				kmer_set.filename
-			)
-
-			with open(file_path, 'rb') as fh:
-				vec = fmt.load(fh, kmer_set)
-
-			if stack:
-				array[i, :] = vec
-			else:
-				vecs.append(vec)
-
-		if stack:
-			return array
-		else:
-			return vecs
-
-	def load_kmer_sets_lazy(self, collection, kmer_sets):
-
-		fmt = kmer_storage_formats[collection.format](collection)
-
-		for i, kmer_set in enumerate(kmer_sets):
-
-			file_path = self._get_path(
-				'kmer_collections',
-				kmer_set.collection.directory,
-				kmer_set.filename
-			)
-
-			with open(file_path, 'rb') as fh:
-				yield fmt.load(fh, kmer_set)
+	def get_kmer_loader(self, collection):
+		return KmerSetLoader(self, collection)
 
 	def alembic_config(self):
 		"""Creates Alembic configuration for sqlite database"""
@@ -393,51 +350,6 @@ class Database(object):
 			dirname = '{}_{}'.format(base, i) + ext
 
 		return dirname
-
-
-	class KmerSetAdder(object):
-
-		def __init__(self, db, collection):
-			self.db = db
-			self.collection = collection
-			self.format = kmer_storage_formats[collection.format](collection)
-
-		def __call__(self, vec, genome, **kwargs):
-
-			# Destination for file
-			filename = 'gen-{}.npy'.format(genome.id)
-			store_path = self.db._get_path(
-				'kmer_collections',
-				self.collection.directory,
-				filename
-			)
-
-			# Create k-mer set
-			kmer_set = KmerSet(
-				collection_id=self.collection.id,
-				genome_id=genome.id,
-				dtype_str=str(vec.dtype),
-				count=(vec > 0).sum(),
-				filename=filename,
-				**kwargs
-			)
-
-			# Write to file
-			with open(store_path, 'wb') as fh:
-				self.format.store(fh, vec, kmer_set)
-
-			# Try adding the set
-			try:
-				session = self.db._ExpireSession()
-				session.add(kmer_set)
-				session.commit()
-
-			# On error, remove the file
-			except Exception as e:
-				os.unlink(store_path)
-				raise
-
-			return kmer_set
 
 
 class KmerSetLoader(object):
