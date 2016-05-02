@@ -10,7 +10,7 @@ import numpy as np
 
 from wgskmers.database import KmerSetCollection
 from wgskmers.kmers import KmerSpec
-from wgskmers.query import query_metrics, mp_query
+from wgskmers.query import query_metrics, mp_query_coords
 from wgskmers.parse import infer_format, find_seq_files, parse_to_array
 from wgskmers.util import kwargs_finished
 from wgskmers import genbank
@@ -190,7 +190,7 @@ def query_command(ctx, db, collection_id, src, **kwargs):
 		metric_names = [metric_choice]
 
 	# Make the query
-	scores = mp_query(query_array, db, collection, ref_sets, metric_names,
+	scores = mp_query_coords(query_array, db, collection, ref_sets, metric_names,
 	                  progress=True)
 
 	# Print the scores

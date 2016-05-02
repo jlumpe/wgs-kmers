@@ -5,6 +5,8 @@ from wgskmers.util import kwargs_finished
 import numba as nb
 import numba.cuda as nb_cuda
 
+from .kmers import vec_to_coords
+
 
 # Numba function signatures
 coords_nb_signature = [
@@ -337,6 +339,78 @@ def mp_query(query, db, collection, ref_sets, metrics, **kwargs):
 		with pbar:
 			for r in results:
 				pbar.update(chunk_size)
+
+	pool.close()
+	pool.join()
+
+	# Return array
+	return scores.np_array
+
+
+class CoordsQueryWorker(object):
+
+	@classmethod
+	def init(cls, query_coords, ref_coords, metric_names, dest):
+		cls.query_coords = query_coords
+		cls.ref_coords = ref_coords
+		cls.metrics = [query_metrics[name] for name in metric_names]
+		cls.dest = dest
+
+		# Ignore floating point divide by zero
+		np.seterr(divide='ignore', invalid='ignore')
+
+	@classmethod
+	def calc_score(cls, ref_idx):
+		ref_coords = cls.ref_coords[ref_idx]
+
+		for k, metric in enumerate(cls.metrics):
+			for j, query_coords in enumerate(cls.query_coords):
+				cls.dest[k, ref_idx, j] = metric.coords(query_coords, ref_coords)
+
+
+def mp_query_coords(query, db, collection, ref_sets, metrics, **kwargs):
+	import multiprocessing as mp
+	import ctypes
+	import wgskmers.multiprocess as kmp
+
+	kmp.enable_method_pickling()
+
+	nworkers = kwargs.pop('nworkers', mp.cpu_count())
+	progress = kwargs.pop('progress', False)
+	kwargs_finished(kwargs)
+
+	loader = db.get_kmer_loader(collection)
+
+	# Scores output as shared memory
+	scores_shape = (len(metrics), len(ref_sets), query.shape[0])
+	scores = kmp.SharedNumpyArray(ctypes.c_float, scores_shape)
+
+	# Query coords in shared memory
+	query_coords = kmp.SharedKmerCoordsCollection.empty(query.sum(axis=1))
+	for i in range(query.shape[0]):
+		query_coords[i] = vec_to_coords(query[i, :])
+
+	# Reference coords in shared memory
+	if progress:
+		import click
+		click.echo('Loading reference k-mer sets...', err=True)
+	ref_coords = loader.load_coords_col(ref_sets, cls=kmp.SharedKmerCoordsCollection)
+
+	# Create pool
+	init_args = (query_coords, ref_coords, metrics, scores)
+	pool = mp.Pool(processes=nworkers, initializer=CoordsQueryWorker.init,
+	               initargs=init_args)
+
+	# Start tasks
+	indices = range(len(ref_sets))
+	results = pool.imap_unordered(CoordsQueryWorker.calc_score, indices)
+
+	# Monitor progress
+	if progress:
+		pbar = tqdm(total=len(indices), desc='Querying reference database')
+		with pbar:
+			for r in results:
+				pbar.update(1)
 
 	pool.close()
 	pool.join()
