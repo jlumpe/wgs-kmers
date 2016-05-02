@@ -158,7 +158,7 @@ def query_command(ctx, db, collection_id, src, **kwargs):
 
 	# Get input files
 	if os.path.isdir(src):
-		query_files = find_batch_files(src, check_ext=check_ext)
+		query_files = find_seq_files(src, check_ext=check_ext)
 		if not query_files:
 			raise click.ClickException('No sequence files found in {}'.format(src))
 
