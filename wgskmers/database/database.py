@@ -10,7 +10,7 @@ import numpy as np
 
 from wgskmers.util import rmpath, kwargs_finished
 from wgskmers.config import config, save_config
-from wgskmers.kmers import KmerSpec
+from wgskmers.kmers import KmerSpec, KmerCoordsCollection
 from .models import *
 from .sqla import ReadOnlySession
 from .store import kmer_storage_formats
@@ -58,7 +58,6 @@ def set_db_version(path, version):
 
 	with open(info_path, 'w') as fh:
 		json.dump(info, fh)
-
 
 
 def get_db_root(path):
@@ -372,17 +371,18 @@ class KmerSetLoader(object):
 		"""For unpickling"""
 		self.__init__(*state)
 
-	def load(self, kmer_set):
-		"""Load a single k-mer set vector from the collection"""
-		assert kmer_set.collection_id == self.collection.id
-
-		file_path = self.db._get_path(
+	def _path_for(self, kmer_set):
+		return self.db._get_path(
 			'kmer_collections',
 			self.collection.directory,
 			kmer_set.filename
 		)
 
-		with open(file_path, 'rb') as fh:
+	def load(self, kmer_set):
+		"""Load a single k-mer set vector from the collection"""
+		assert kmer_set.collection_id == self.collection.id
+
+		with open(self._path_for(kmer_set), 'rb') as fh:
 			return self.format.load(fh, kmer_set)
 
 	def load_array(self, kmer_sets, out=None, dtype=None):
@@ -398,6 +398,34 @@ class KmerSetLoader(object):
 			out[i, :] = self.load(kmer_set)
 
 		return out
+
+	def load_coords(self, kmer_set, counts=False):
+		assert kmer_set.collection_id == self.collection.id
+
+		with open(self._path_for(kmer_set), 'rb') as fh:
+			array = self.format.load_coords(fh, kmer_set)
+
+		if counts:
+			if kmer_set.has_counts:
+				return array
+			else:
+				return np.vstack(array, np.ones(len(array), dtype=array.dtype))
+
+		else:
+			if kmer_set.has_counts:
+				return array[0, :]
+			else:
+				return array
+
+	def load_coords_col(self, kmer_sets, cls=KmerCoordsCollection):
+		assert all(ks.collection_id == self.collection.id for ks in kmer_sets)
+
+		coords_col = cls.empty([ks.count for ks in kmer_sets])
+
+		for i, ks in enumerate(kmer_sets):
+			coords_col[i] = self.load_coords(ks, counts=False)
+
+		return coords_col
 
 
 class KmerSetAdder(object):

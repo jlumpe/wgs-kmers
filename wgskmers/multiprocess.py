@@ -5,10 +5,11 @@ import traceback
 import multiprocessing as mp
 import copy_reg
 import types
+import ctypes
 
 import numpy as np
 
-from wgskmers.kmers import KmerSpec
+from wgskmers.kmers import KmerSpec, KmerCoordsCollection
 
 
 def _pickle_method(method):
@@ -78,3 +79,25 @@ class SharedNumpyArray(object):
 		np_array = np.frombuffer(shared_array, dtype=np.dtype(ctype))
 		np_array.shape = shape
 		return np_array
+
+class SharedKmerCoordsCollection(KmerCoordsCollection):
+
+	def __init__(self, shared_array, bounds):
+		self.shared_array = shared_array
+
+		super(SharedKmerCoordsCollection, self).__init__(shared_array.np_array,
+		                                                 bounds)
+
+	def __getstate__(self):
+		return (self.shared_array, self.bounds)
+
+	def __setstate__(self, state):
+		self.shared_array, self.bounds = state
+
+	@classmethod
+	def empty(cls, lengths):
+		bounds = cls._make_bounds(lengths)
+
+		shared_array = SharedNumpyArray(ctypes.c_uint32, (int(bounds[-1]),))
+
+		return cls(shared_array, bounds)

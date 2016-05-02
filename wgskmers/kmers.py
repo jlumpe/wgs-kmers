@@ -8,6 +8,8 @@ Note that these functions are case-sensitive and expect sequence strings to
 be upper case.
 """
 
+import collections
+
 import numpy as np
 
 from Bio.Seq import Seq
@@ -90,6 +92,41 @@ def locate_kmers(seq, k, prefix):
 			start = p + 1
 		else:
 			break
+
+
+def vec_to_coords(vec, counts=False, out=None, dtype=np.int64):
+	"""Convert to compressed coordinate representation"""
+	coords, = np.nonzero(vec)
+
+	if counts:
+		if out is None:
+			out = np.empty((2, coords.shape[0]), dtype=dtype)
+
+		out[0, :] = coords
+		out[1, :] = vec[coords]
+
+	else:
+		if out is None:
+			out = np.empty(coords.shape[0], dtype=dtype)
+
+		out[:] = coords
+
+	return out
+
+
+def coords_to_vec(array, has_counts=False, out=None, idx_len=None, dtype=None):
+	"""Convert from coordinate representation back to vector"""
+
+	if out is None:
+		out = np.zeros(idx_len, dtype=dtype)
+
+	if has_counts:
+		out[array[0, :]] = array[1, :]
+
+	else:
+		out[array] = 1
+
+	return out
 
 
 class KmerSpec(object):
@@ -332,3 +369,54 @@ class QualityKmerFinder(KmerFinder):
 				s = slice(loc + self.spec.plen, loc + self.spec.k)
 				if min(wrap_qual[s]) >= self.threshold:
 					yield wrap_seq[s]
+
+
+class KmerCoordsCollection(collections.Sequence):
+	"""Stores a collection of k-mer sets in coordinate format in a single array"""
+
+	def __init__(self, coords_array, bounds):
+		self.coords_array = coords_array
+		self.bounds = bounds
+
+	def __len__(self):
+		return len(self.bounds) - 1
+
+	def __getitem__(self, index):
+		if 0 <= index < len(self):
+			return self.coords_array[slice(*self.bounds[index:index+2])]
+		else:
+			raise ValueError('Index {} out of bounds'.format(index))
+
+	def __setitem__(self, index, value):
+		if 0 <= index < len(self):
+			self.coords_array[slice(*self.bounds[index:index+2])] = value
+		else:
+			raise ValueError('Index {} out of bounds'.format(index))
+
+	def __iter__(self):
+		for i in range(len(self)):
+			yield self.coords_array[slice(*self.bounds[i:i+2])]
+
+	@classmethod
+	def from_coords_seq(cls, coord_seq):
+		coords_col = cls.empty(map(len, coord_seq))
+
+		for i, coords in enumerate(coord_seq):
+			coords_col[i] = coords
+
+		return coords_col
+
+	@classmethod
+	def empty(cls, lengths, coords_array=None):
+		bounds = cls._make_bounds(lengths)
+
+		if coords_array is None:
+			coords_array = np.empty(bounds[-1], dtype=np.uint32)
+
+		return cls(coords_array, bounds)
+
+	@classmethod
+	def _make_bounds(cls, lengths):
+		bounds = np.zeros(len(lengths) + 1, dtype=np.uint32)
+		bounds[1:] = np.cumsum(lengths)
+		return bounds
