@@ -6,12 +6,22 @@ import numba as nb
 import numba.cuda as nb_cuda
 
 
+# Numba function signatures
+coords_nb_signature = [
+	(nb.uint32[:], nb.uint32[:], nb.float32[:]),
+	(nb.uint64[:], nb.uint64[:], nb.float32[:]),
+	(nb.int32[:], nb.int32[:], nb.float32[:]),
+	(nb.int64[:], nb.int64[:], nb.float32[:]),
+]
+
+
 class QueryMetric(object):
 	def __init__(self, key, title, py_func, is_distance):
 		self.key = key
 		self.title = title
 		self.py_func = py_func
 		self.nb_funcs = dict()
+		self.coords_funcs = dict()
 		self.is_distance = is_distance
 
 	def __call__(self, query_vec, ref_vec):
@@ -26,8 +36,27 @@ class QueryMetric(object):
 	def nb_cuda(self, query_vec, ref_vec, out=None):
 		return self._call_nb('cuda', query_vec, ref_vec, out)
 
+	def coords(self, query_vec, ref_vec, out=None):
+		return self._call_coords('cpu', query_vec, ref_vec, out)
+
+	def coords_parallel(self, query_vec, ref_vec, out=None):
+		return self._call_coords('parallel', query_vec, ref_vec, out)
+
+	def coords_cuda(self, query_vec, ref_vec, out=None):
+		return self._call_coords('cuda', query_vec, ref_vec, out)
+
 	def _call_nb(self, target, query_vec, ref_vec, out=None):
 		func = self.nb_funcs[target]
+		if func is None:
+			raise RuntimeError(
+				'Target "{}" not supported on this system'
+				.format(target)
+			)
+		else:
+			return func(query_vec, ref_vec, out)
+
+	def _call_coords(self, target, query_vec, ref_vec, out=None):
+		func = self.coords_funcs[target]
 		if func is None:
 			raise RuntimeError(
 				'Target "{}" not supported on this system'
@@ -51,6 +80,24 @@ class QueryMetric(object):
 					                         nopython=True)
 					self.nb_funcs[target] = guv_dec(func)
 
+			return func
+
+		return decorator
+
+	def coords_func(self, signature, layout, **kwargs):
+		nb_targets = kwargs.pop('nb_targets', ['cpu', 'parallel', 'cuda'])
+		assert not kwargs
+
+		def decorator(func):
+			for target in nb_targets:
+
+				if target == 'cuda' and not nb.cuda.is_available():
+					self.coords_funcs[target] = None
+
+				else:
+					guv_dec = nb.guvectorize(signature, layout, target=target,
+					                         nopython=True)
+					self.coords_funcs[target] = guv_dec(func)
 
 			return func
 
@@ -83,6 +130,32 @@ def nb_hamming(query, ref, out):
 
 	out[0] = dist
 
+@hamming.coords_func(coords_nb_signature, '(n),(m)->()')
+def coords_hamming(query, ref, out):
+
+	n = query.shape[0]
+	m = ref.shape[0]
+
+	out[0] = 0
+
+	i = 0
+	j = 0
+	while i < n and j < m:
+		q = query[i]
+		r = ref[j]
+
+		if q != r:
+			out[0] += 1
+
+		if q <= r:
+			i += 1
+
+		if r <= q:
+			j += 1
+
+	out[0] += n - i
+	out[0] += m - j
+
 
 @metric('Jaccard Index', is_distance=False)
 def jaccard(query, ref, out=None):
@@ -99,7 +172,6 @@ def jaccard(query, ref, out=None):
 	else:
 		return out
 
-
 @jaccard.numba_func([(nb.bool_[:], nb.bool_[:], nb.float32[:])],
                     '(n),(n)->()')
 def nb_jaccard(query, ref, out):
@@ -114,6 +186,36 @@ def nb_jaccard(query, ref, out):
 	out[0] = intersection
 	out[0] /= union
 
+@jaccard.coords_func(coords_nb_signature, '(n),(m)->()')
+def coords_jaccard(query, ref, out):
+
+	n = query.shape[0]
+	m = ref.shape[0]
+
+	intersection = 0
+	union = 0
+
+	i = 0
+	j = 0
+	while i < n and j < m:
+		q = query[i]
+		r = ref[j]
+
+		union += 1
+		if q == r:
+			intersection += 1
+
+		if q <= r:
+			i += 1
+
+		if r <= q:
+			j += 1
+
+	union += n - i
+	union += m - j
+
+	out[0] = intersection
+	out[0] /= union
 
 
 @metric('Asymmetrical Jaccard', is_distance=False)
@@ -144,6 +246,33 @@ def nb_asym_jacc(query, ref, out):
 
 	out[0] = intersection
 	out[0] /= ref_weight
+
+
+@asym_jacc.coords_func(coords_nb_signature, '(n),(m)->()')
+def coords_asym_jacc(query, ref, out):
+
+	n = query.shape[0]
+	m = ref.shape[0]
+
+	intersection = 0
+
+	i = 0
+	j = 0
+	while i < n and j < m:
+		q = query[i]
+		r = ref[j]
+
+		if q == r:
+			intersection += 1
+
+		if q <= r:
+			i += 1
+
+		if r <= q:
+			j += 1
+
+	out[0] = intersection
+	out[0] /= m
 
 
 class QueryWorker(object):
