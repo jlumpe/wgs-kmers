@@ -18,20 +18,43 @@ ncbi_url = 'http://www.ncbi.nlm.nih.gov'
 
 # Regular expressions to match accession numbers
 # http://www.ncbi.nlm.nih.gov/Sequin/acc.html
-accession_re = re.compile(r'[A-Z]+_?\d+(\.\d+)?')
-accession_versioned_re = re.compile(r'[A-Z]+_?\d+\.\d+')
-accession_unversioned_re = re.compile(r'[A-Z]+_?\d+')
-accession_refseq_re = re.compile(r'[A-Z]{2}_\d+(\.\d+)?')
+# Looks like there are between 5-10 digits in the numerical portion
+acc_re = re.compile(r'[A-Z]+_?\d{5,10}(?:\.\d+)?')
+acc_versioned_re = re.compile(r'[A-Z]+_?\d{5,10}\.\d+')
+acc_unversioned_re = re.compile(r'[A-Z]+_?\d{5,10}')
+acc_refseq_re = re.compile(r'[A-Z]{2}_\d{5,10}(?:\.\d+)?')
+
+# Same as acc_re but meant to be used for searching within a larger string.
+# Contains negative look(ahead|behind)s asserting that the number is not
+# immediately preceded/followed by an alphanumeric character to prevent false
+# positives.
+acc_search_re = re.compile('(?<![A-Za-z0-9])' + acc_re.pattern +
+                           '(?![A-Za-z0-9])')
 
 
 def is_accession(string):
 	"""Checks if a string looks like an accession number"""
-	return accession_re.match(string) is not None
+	return acc_re.match(string) is not None
 
 
 def is_refseq(accession):
 	"""Checks if a given accession number is a refseq number"""
-	return accession_refseq_re.match(accession) is not None
+	return acc_refseq_re.match(accession) is not None
+
+
+def extract_acc(string, one_only=True):
+	"""Extracts a genbank accession number from a larger string
+
+	Meant to be used to find accession numbers in file names or similar.
+	"""
+	matches = acc_search_re.findall(string)
+
+	if len(matches) == 0:
+		return None
+	elif len(matches) == 1 or not one_only:
+		return matches[0]
+	else:
+		return None
 
 
 class StupidBiopythonUrlopenReplacer(object):
