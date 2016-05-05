@@ -9,7 +9,7 @@ from csv import DictWriter, DictReader
 import click
 from tqdm import tqdm
 
-from wgskmers.database import Genome
+from wgskmers.database import models
 from wgskmers.parse import find_seq_files
 from wgskmers.genbank import extract_acc
 from .util import choose_db, with_db
@@ -19,11 +19,12 @@ gb_header_re = re.compile(r'>gi\|(\d+)\|(?:gb|ref|emb)\|(.+)\|(.*)')
 
 
 def parse_bool(string):
+	"""Parse a boolean value from string format"""
 	string = string.lower().strip()
 
-	if string in ['yes', 'true', 't']:
+	if string in ['yes', 'y', 'true', 't']:
 		return True
-	elif string in ['no', 'false', 'f']:
+	elif string in ['no', 'n', 'false', 'f']:
 		return False
 	else:
 		raise ValueError(string)
@@ -84,7 +85,6 @@ genome_import_attrs = OrderedDict([
 	('gb_db', str),
 	('gb_id', int),
 	('gb_acc', str),
-	('gb_taxid', int),
 	('is_assembled', parse_bool),
 	('organism', str),
 	('file_format', lambda value: str(value).lower()),
@@ -173,7 +173,7 @@ def parse_import_csv(fh, db):
 				continue
 
 			# Check already in database
-			found = (session.query(Genome)
+			found = (session.query(models.Genome)
 			                .filter_by(**{uq_col: val})
 			                .first())
 			if found is not None:
@@ -189,7 +189,7 @@ def parse_import_csv(fh, db):
 			if val in seen_vals:
 				raise click.ClickException(
 					err_prefix + 
-					'Duplicate value for {}'.format(uq_col, val)
+					'Duplicate value {} for {}'.format(uq_col, val)
 				)
 
 			seen_vals.add(val)
@@ -215,7 +215,7 @@ def list(ctx, db, dest, out_csv=False):
 	"""List reference genomes"""
 
 	session = db.get_session()
-	genomes = session.query(Genome).all()
+	genomes = session.query(models.Genome).all()
 
 	if out_csv:
 
@@ -230,16 +230,83 @@ def list(ctx, db, dest, out_csv=False):
 			click.echo(g.description)
 
 
+@genomes_group.command(short_help='List genome sets')
+@click.option('-c', '--csv', 'out_csv', is_flag=True)
+@click.argument('dest', type=click.File('w'), default='-')
+@with_db()
+def list_sets(ctx, db, dest, out_csv=False):
+
+	session = db.get_session()
+	gsets = session.query(models.GenomeSet).all()
+
+	if out_csv:
+
+		writer = DictWriter(dest, ['id', 'name', 'genome_count'])
+		writer.writeheader()
+
+		for gset in gsets:
+			writer.writerow(dict(id=gset.id, name=gset.name,
+			                genome_count=gset.genomes.count()))
+
+	else:
+		for gset in gsets:
+			click.echo('({0.id}) {0.name}'.format(gset))
+
+
+@genomes_group.command(short_help='Create genome set')
+@click.argument('name')
+@click.argument('description', required=False)
+@with_db(confirm=True)
+def make_set(ctx, db, name, description=None):
+
+	session = db.get_session()
+
+	if session.query(models.GenomeSet).filter_by(name=name).count() > 0:
+		raise click.ClickException('Genome set already exists with name "{}"'
+		                           .format(name))
+
+	gset = models.GenomeSet(name=name, description=description)
+
+	session.add(gset)
+	session.commit()
+
+	click.echo('Genome set "{0.name}" created with ID {0.id}'.format(gset))
+
+
 @genomes_group.command(name='import', short_help='Import reference genomes')
 @click.option('-c', '--csv', 'csv_out', type=click.Path(),
 	help='Path to write import csv file to')
 @click.option('-e', '--existing', type=click.File(),
 	help='Existing import template .csv file to use')
+@click.option('-s', '--gset', 'gset_id', type=int,
+              help='ID of genome set to add to (check the list_sets command)')
+@click.option('-r', '--recursive', is_flag=True,
+              help='Search the directory for files recursively')
 @click.argument('directory', type=click.Path(exists=True))
 @with_db(confirm=True)
-def import_genomes(ctx, db, directory, csv_out=None, existing=None):
+def import_genomes(ctx, db, directory, **kwargs):
+
+	csv_out = kwargs.pop('csv_out')
+	existing = kwargs.pop('existing')
+	gset_id = kwargs.pop('gset_id')
+	recursive = kwargs.pop('recursive')
+	assert not kwargs
 
 	directory = os.path.abspath(directory)
+
+	# Get genome set
+	if gset_id is not None:
+		session = db.get_session()
+		gset = session.query(models.GenomeSet).get(gset_id)
+		session.close()
+
+		if gset is None:
+			raise click.ClickException('No genome set with ID {}'.format(gset_id))
+
+		gsets = [gset]
+
+	else:
+		gsets = []
 		
 	# Create a new import template file
 	if existing is None:
@@ -250,7 +317,8 @@ def import_genomes(ctx, db, directory, csv_out=None, existing=None):
 		# Find fasta files in directory
 		directory = os.path.abspath(directory)
 		files_info = find_seq_files(directory, filter_ext=True,
-		                            filter_contents=True, warn_contents=True)
+		                            filter_contents=True, warn_contents=True,
+		                            recursive=recursive)
 
 		# Write import .csv template
 		with open(csv_out, 'w') as fh:
@@ -300,7 +368,7 @@ def import_genomes(ctx, db, directory, csv_out=None, existing=None):
 
 			# Try adding it
 			try:
-				db.store_genome(file_path, **genome_attrs)
+				db.store_genome(file_path, genome_sets=gsets, **genome_attrs)
 				added += 1
 			except Exception as e:
 				click.echo(
@@ -308,6 +376,7 @@ def import_genomes(ctx, db, directory, csv_out=None, existing=None):
 					.format(file_path, e),
 					err=True
 				)
+				errors += 1
 
 	click.echo(
 		'Successfully imported {} genomes, with {} errors'
