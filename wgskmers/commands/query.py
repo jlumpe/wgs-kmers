@@ -11,7 +11,7 @@ import numpy as np
 from wgskmers.database import KmerSetCollection
 from wgskmers.kmers import KmerSpec
 from wgskmers.query import query_metrics, mp_query_coords
-from wgskmers.parse import infer_format, find_seq_files, parse_to_array
+from wgskmers.parse import find_seq_files, SeqFileInfo, parse_to_array
 from wgskmers.util import kwargs_finished
 from wgskmers import genbank
 from .util import with_db
@@ -116,7 +116,7 @@ def print_matches(queries, refs, metrics, scores, topn):
 	type=click.Choice(['fasta', 'fastq', 'fastq-sanger', 'fastq-solexa',
 	                   'fastq-illumina']),
 	help='File format, as argument to Bio.SeqIO.parse. If omitted, will infer '
-	     'from extension of first file encountered.')
+	     'from file extensions.')
 @click.option('-m', '--metric', type=click.Choice(query_metrics.keys() + ['all']),
               default='all', help='Query metric to use')
 @click.option('-n', '--n-results', type=int, default=10,
@@ -158,25 +158,32 @@ def query_command(ctx, db, collection_id, src, **kwargs):
 
 	# Get input files
 	if os.path.isdir(src):
-		query_files = find_seq_files(src, check_ext=check_ext)
-		if not query_files:
+		files_info = find_seq_files(src, filter_ext=True, filter_contents=True,
+		                            warn_contents=True)
+		if not files_info:
 			raise click.ClickException('No sequence files found in {}'.format(src))
 
 	else:
-		query_files = [src]
+		info = SeqFileInfo.get(src)
+		files_info = [info]
 
-	# Get format
-	if file_format is None:
-		file_format = infer_format(query_files[0])
-		if file_format is None:
-			raise ValueError("Couldn't infer format for {}"
-				.format(query_files[0]))
-		logger.debug('Inferring format "{}" from {}'
-		             .format(file_format, query_files[0]))
+		# Check format
+		if file_format is not None:
+			info.seq_format = file_format
+		elif info.seq_format is None:
+			raise RuntimeError('Couldn\'t infer format for {}'.format(src))
+
+		# Check contents
+		info.check_contents()
+		if info.contents_ok is False:
+			raise RuntimeError('Bad file contents in {}: {}'
+			                   .format(src, info.contents_error))
+
+	query_files = [info.path for info in files_info]
 
 	# Get the query vectors
 	pbar_args = dict(desc='Parsing query files', unit=' file(s)', leave='False')
-	query_array = parse_to_array(query_files, spec, progress=pbar_args,
+	query_array = parse_to_array(files_info, spec, progress=pbar_args,
 			                     q_threshold=q_threshold,
 			                     c_threshold=c_threshold)
 

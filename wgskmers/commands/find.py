@@ -13,7 +13,7 @@ from tqdm import tqdm
 from Bio import SeqIO
 
 from wgskmers.kmers import KmerSpec, nucleotides
-from wgskmers.parse import ProgressSeqParser, find_seq_files, infer_format
+from wgskmers.parse import ProgressSeqParser, find_seq_files, SeqFileInfo
 from wgskmers.util import iterator_empty
 
 
@@ -195,7 +195,7 @@ def make_dest_path(src_path, dest_dir, ext='.txt'):
 	type=click.Choice(['fasta', 'fastq', 'fastq-sanger', 'fastq-solexa',
 	                   'fastq-illumina']),
 	help='File format, as argument to Bio.SeqIO.parse. If omitted, will infer '
-	     'from extension of first file encountered.')
+	     'from extensions.')
 @click.option('-b', '--batch', is_flag=True, help='Run in batch mode.')
 @click.option('-o', '--overwrite', is_flag=True,
 	help='Overwrite existing output files')
@@ -262,8 +262,9 @@ def find_command(src, dest, prefix, k, **kwargs):
 			raise ValueError('Must give destination directory in batch mode')
 
 		# Find files in source directory (raises OSError if doesn't exist)
-		src_paths = find_seq_files(src)
-		if not src_paths:
+		files_info = find_seq_files(src, check_ext=True, filter_contents=True,
+		                            warn_contents=True)
+		if not files_info:
 			raise RuntimeError('No files found in {}'.format(src))
 
 		# Create output directory if necessary
@@ -271,13 +272,26 @@ def find_command(src, dest, prefix, k, **kwargs):
 			os.mkdir(dest)
 
 		# Destination file paths
-		dest_paths = [make_dest_path(src, dest, ext=out_ext)
-		              for src in src_paths]
+		dest_paths = [make_dest_path(info.path, dest, ext=out_ext)
+		              for info in files_info]
 
 	# Single-file mode
 	else:
 
-		src_paths = [src]
+		info = SeqFileInfo.get(src)
+		files_info = [info]
+
+		# Check format
+		if file_format is not None:
+			info.seq_format = file_format
+		elif info.seq_format is None:
+			raise RuntimeError('Couldn\'t infer format for {}'.format(src))
+
+		# Check contents
+		info.check_contents()
+		if info.contents_ok is False:
+			raise RuntimeError('Bad file contents in {}: {}'
+			                   .format(src, info.contents_error))
 
 		# Get destination path
 		if dest is not None:
@@ -291,23 +305,14 @@ def find_command(src, dest, prefix, k, **kwargs):
 		else:
 			dest_paths = [None]
 
-	# Get format
-	if file_format is None:
-		file_format = infer_format(src_paths[0])
-		if file_format is None:
-			raise ValueError("Couldn't infer format for {}"
-				.format(src_paths[0]))
-		logger.debug('Inferring format "{}" from {}'
-		             .format(file_format, src_paths[0]))
-
 	# Should be ok, loop over the files
-	paths_iter = zip(src_paths, dest_paths)
+	files_info = zip(files_info, dest_paths)
 	if batch_mode and show_progress:
 		paths_iter = tqdm(paths_iter, unit='files', leave=False)
 
-	for src_path, dest_path in paths_iter:
+	for file_info, dest_path in files_info:
 		
-		logger.debug('Processing source file {}'.format(src_path))
+		logger.debug('Processing source file {}'.format(info.path))
 
 		# Check if output file exists
 		if dest_path is not None and os.path.exists(dest_path):
@@ -319,9 +324,10 @@ def find_command(src, dest, prefix, k, **kwargs):
 
 		# Wrap parse iterator in progress bar
 		if show_progress:
-			records = ProgressSeqParser(src_path, fmt=file_format, leave=False)
+			records = ProgressSeqParser(info.path, fmt=info.seq_format,
+			                            leave=False)
 		else:
-			records = SeqIO.parse(src_path, file_format)
+			records = SeqIO.parse(info.path, info.seq_format)
 
 		# Find the k-mers with quality info
 		if threshold is not None:
@@ -336,7 +342,7 @@ def find_command(src, dest, prefix, k, **kwargs):
 		finders, no_seqs = iterator_empty(finders)
 		if no_seqs:
 			logger.warn('No sequences found in {}, bad file format?'
-			            .format(src_path))
+			            .format(info.path))
 
 		# Output stream - file (text/binary) or StringIO
 		if dest_path is None:

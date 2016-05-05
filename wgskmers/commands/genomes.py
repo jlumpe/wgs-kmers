@@ -10,6 +10,8 @@ import click
 from tqdm import tqdm
 
 from wgskmers.database import Genome
+from wgskmers.parse import find_seq_files
+from wgskmers.genbank import extract_acc
 from .util import choose_db, with_db
 
 
@@ -27,21 +29,12 @@ def parse_bool(string):
 		raise ValueError(string)
 
 
-import_exts = ['.fasta', '.fna']
+def guess_fasta_attrs(info):
 
-def find_seq_files(directory):
-	files = []
-	for f in os.listdir(directory):
-		if os.path.isfile(f) and any(f.endswith(e) for e in import_exts):
-			files.append(os.path.join(directory, f))
-	return files
-
-
-def guess_fasta_attrs(path):
-
+	assert info.seq_format == 'fasta'
 	attrs = dict(file_format='fasta')
 
-	with open(path) as fh:
+	with info.open() as fh:
 
 		# Get first line, should be header
 		# (otherwise, not much we can do...)
@@ -74,8 +67,14 @@ def guess_fasta_attrs(path):
 					except ValueError:
 						pass
 
+	# Override with accession from file name
+	fn_acc = extract_acc(info.basename)
+	if fn_acc is not None and fn_acc != attrs['gb_acc']:
+		attrs['gb_acc'] = fn_acc
+		attrs['gb_id'] = None
+
 	if 'description' not in attrs:
-		attrs['description'] = os.path.splitext(os.path.basename(path))[0]
+		attrs['description'] = info.wo_ext
 
 	return attrs
 
@@ -248,19 +247,26 @@ def import_genomes(ctx, db, directory, csv_out=None, existing=None):
 		if csv_out is None:
 			csv_out = os.path.join(directory, 'genomes-import.csv')
 
+		# Find fasta files in directory
+		directory = os.path.abspath(directory)
+		files_info = find_seq_files(directory, filter_ext=True,
+		                            filter_contents=True, warn_contents=True)
+
 		# Write import .csv template
 		with open(csv_out, 'w') as fh:
 
 			writer = DictWriter(fh, genome_import_cols)
 			writer.writeheader()
-			
-			# Find fasta files in directory
-			directory = os.path.abspath(directory)
-			for path in tqdm(find_seq_files(directory), desc='Checking files'):
 
-				# Guess attributes
-				attrs = guess_fasta_attrs(path)
-				attrs['file'] = path
+			# Guess attributes
+			for info in tqdm(files_info, desc='Checking files'):
+
+				# Make sure it's a supported format
+				if info.seq_format != 'fasta':
+					continue
+
+				attrs = guess_fasta_attrs(info)
+				attrs['file'] = info.path
 				writer.writerow(attrs)
 
 		# Open it if possible
