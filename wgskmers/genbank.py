@@ -42,7 +42,7 @@ def is_refseq(accession):
 	return acc_refseq_re.match(accession) is not None
 
 
-def extract_acc(string, one_only=True):
+def extract_acc(string, one_only=False):
 	"""Extracts a genbank accession number from a larger string
 
 	Meant to be used to find accession numbers in file names or similar.

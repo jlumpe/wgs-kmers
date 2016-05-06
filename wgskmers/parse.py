@@ -96,7 +96,7 @@ class SeqFileInfo(object):
 		info = SeqFileInfo(path)
 
 		# Get extension
-		wo_ext, ext = os.path.splitext(path)
+		wo_ext, ext = os.path.splitext(info.basename)
 
 		# Check compression
 		if allow_compressed:
@@ -130,6 +130,7 @@ def find_seq_files(directory, **kwargs):
 	filter_contents = kwargs.pop('filter_contents', False)
 	warn_contents = kwargs.pop('warn_contents', False)
 	check_contents = kwargs.pop('check_contents', filter_contents or warn_contents)
+	tqdm_args = kwargs.pop('tqdm', None)
 	kwargs_finished(kwargs)
 
 	if warn_contents:
@@ -142,6 +143,12 @@ def find_seq_files(directory, **kwargs):
 		         for fn in filenames)
 	else:
 		paths = (f for f in os.listdir(directory) if os.path.isfile(f))
+
+	# Show progress
+	if tqdm_args is True:
+		paths = tqdm(paths)
+	elif tqdm_args:
+		paths = tqdm(paths, **tqdm_args)
 
 	files_info = []
 	for path in paths:

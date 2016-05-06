@@ -80,12 +80,13 @@ def guess_fasta_attrs(info):
 					except ValueError:
 						pass
 
-	# Override with accession from file name
+	# Try getting accession from file name
 	fn_acc = extract_acc(info.basename)
-	if fn_acc is not None and fn_acc != attrs['gb_acc']:
+	if attrs.get('gb_acc', None) is None and fn_acc is not None:
 		attrs['gb_acc'] = fn_acc
 		attrs['gb_id'] = None
 
+	# Default description is file name
 	if 'description' not in attrs:
 		attrs['description'] = info.wo_ext
 
@@ -317,6 +318,8 @@ def make_set(ctx, db, name, description=None):
               help='Search the directory for files recursively')
 @click.option('--keep/--no-keep', default=True,
               help='Keep original files after they have been imported')
+@click.option('--check-contents/--no-check-contents', default=True,
+              help='Perform basic verification of file contents')
 @click.argument('directory', type=click.Path(exists=True))
 @with_db(confirm=True)
 def import_genomes(ctx, db, directory, **kwargs):
@@ -326,6 +329,7 @@ def import_genomes(ctx, db, directory, **kwargs):
 	gset_id = kwargs.pop('gset_id')
 	recursive = kwargs.pop('recursive')
 	keep = kwargs.pop('keep')
+	check_contents = kwargs.pop('check_contents')
 	assert not kwargs
 
 	directory = os.path.abspath(directory)
@@ -352,9 +356,16 @@ def import_genomes(ctx, db, directory, **kwargs):
 
 		# Find fasta files in directory
 		directory = os.path.abspath(directory)
-		files_info = find_seq_files(directory, filter_ext=True,
-		                            filter_contents=True, warn_contents=True,
-		                            recursive=recursive, allow_compressed=True)
+		files_info = find_seq_files(
+			directory,
+			filter_ext=True,
+			filter_contents=True,
+			check_contents=check_contents,
+			warn_contents=check_contents,
+			recursive=recursive,
+			allow_compressed=True,
+			tqdm=dict(desc='Finding sequence files')
+		)
 
 		# Write import .csv template
 		with open(csv_out, 'w') as fh:
