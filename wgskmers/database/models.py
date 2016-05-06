@@ -1,7 +1,7 @@
 """SQLAlchemy models"""
 
 from sqlalchemy import Table, ForeignKey
-from sqlalchemy import Column, Integer, String, Boolean, DateTime
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Enum
 from sqlalchemy.orm import relationship, backref
 from sqlalchemy.ext.declarative import declarative_base
 
@@ -13,6 +13,9 @@ __all__ = ['Base', 'KmerSetCollection', 'KmerSet', 'Genome', 'GenomeSet']
 
 # SqlAlchemy declarative base
 Base = declarative_base()
+
+
+CompressionFormat = Enum('gzip')
 
 
 class Genome(Base, TrackChangesMixin):
@@ -31,6 +34,7 @@ class Genome(Base, TrackChangesMixin):
 	organism = Column(String())
 	filename = Column(String(), nullable=False, unique=True)
 	file_format = Column(String(), nullable=False)
+	compression = Column(CompressionFormat, nullable=True)
 	extra = Column(MutableJsonDict.as_mutable(JsonType))
 
 	def __repr__(self):

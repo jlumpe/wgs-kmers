@@ -2,7 +2,7 @@
 
 import os
 import re
-from collections import OrderedDict
+from collections import OrderedDict, namedtuple
 from textwrap import dedent
 from csv import DictWriter, DictReader
 
@@ -28,6 +28,18 @@ def parse_bool(string):
 		return False
 	else:
 		raise ValueError(string)
+
+
+def import_str(obj, lower=False):
+	"""Converts value to string and strips for import to string field"""
+	if obj:
+		s = str(obj).strip()
+		if lower:
+			s = s.lower()
+		return s
+
+	else:
+		return None
 
 
 def guess_fasta_attrs(info):
@@ -81,23 +93,29 @@ def guess_fasta_attrs(info):
 
 
 genome_import_attrs = OrderedDict([
-	('description', str),
-	('gb_db', str),
+	('description', import_str),
+	('gb_db', import_str),
 	('gb_id', int),
-	('gb_acc', str),
+	('gb_acc', import_str),
 	('is_assembled', parse_bool),
-	('organism', str),
-	('file_format', lambda value: str(value).lower()),
+	('organism', import_str),
+	('file_format', lambda value: import_str(value, lower=True)),
 ])
+
+reqd_genome_import_attrs = ['description', 'is_assembled', 'file_format']
+uq_genome_import_attrs = ['description', 'gb_id', 'gb_acc']
 
 genome_show_attrs = ['id'] + genome_import_attrs.keys() + [
 	'created_at',
 	'updated_at',
 ]
 
-genome_import_cols = genome_import_attrs.copy()
-genome_import_cols['file'] = str
+genome_import_cols = genome_import_attrs.keys()
+genome_import_cols.append('file')
+genome_import_cols.append('compression')
 
+
+ImportFileItem = namedtuple('ImportFileItem', ['path', 'compression', 'attrs'])
 
 def parse_import_csv(fh, db):
 
@@ -111,7 +129,7 @@ def parse_import_csv(fh, db):
 	reader = DictReader(fh)
 
 	# Check missing columns
-	missing_cols = set(genome_import_cols.keys()).difference(reader.fieldnames)
+	missing_cols = set(genome_import_cols).difference(reader.fieldnames)
 	if missing_cols:
 		raise click.ClickException(
 			'Missing column "{}" in import file'
@@ -131,6 +149,12 @@ def parse_import_csv(fh, db):
 				err_prefix +
 				'File {} does not exist'.format(path)
 			)
+
+		# Check compression
+		compression = import_str(row['compression'], lower=True)
+		if compression not in [None, 'gzip']:
+			raise click.ClickException('Unknown compression type "{}"'
+			                           .format(compression))
 
 		# Get attributes from row
 		attrs = dict()
@@ -152,7 +176,7 @@ def parse_import_csv(fh, db):
 					)
 
 		# Check required attributes
-		for attrname in ['description', 'is_assembled', 'file_format']:
+		for attrname in reqd_genome_import_attrs:
 			if attrs[attrname] is None:
 				raise click.ClickException(
 					err_prefix +
@@ -167,7 +191,8 @@ def parse_import_csv(fh, db):
 			)
 
 		# Check uniqueness of columns
-		for uq_col in ['description', 'gb_id', 'gb_acc']:
+		attrs_ok = True
+		for uq_col in uq_genome_import_attrs:
 			val = attrs[uq_col]
 			if val is None:
 				continue
@@ -177,25 +202,33 @@ def parse_import_csv(fh, db):
 			                .filter_by(**{uq_col: val})
 			                .first())
 			if found is not None:
-				raise click.ClickException(
+				click.echo(
 					err_prefix + 
 					'Reference genome already exists in database with '
-					'{} "{}"'
-					.format(uq_col, val)
+					'{} "{}" - skipping'
+					.format(uq_col, val),
+					err=True
 				)
+				attrs_ok = False
+				continue
 
 			# Check already in file
 			seen_vals = uq_vals.setdefault(uq_col, set())
 			if val in seen_vals:
-				raise click.ClickException(
-					err_prefix + 
-					'Duplicate value {} for {}'.format(uq_col, val)
+				click.echo(
+					err_prefix +  'Duplicate value {} for column {} - skipping'
+					.format(uq_col, val),
+					err=True
 				)
+				attrs_ok = False
+				continue
 
 			seen_vals.add(val)
 
-		# Should be ok
-		return_vals.append((path, attrs))
+		# Add if ok
+		if attrs_ok:
+			return_vals.append(ImportFileItem(path=path, attrs=attrs,
+			                                  compression=compression))
 
 	return return_vals
 
@@ -282,6 +315,8 @@ def make_set(ctx, db, name, description=None):
               help='ID of genome set to add to (check the list_sets command)')
 @click.option('-r', '--recursive', is_flag=True,
               help='Search the directory for files recursively')
+@click.option('--keep/--no-keep', default=True,
+              help='Keep original files after they have been imported')
 @click.argument('directory', type=click.Path(exists=True))
 @with_db(confirm=True)
 def import_genomes(ctx, db, directory, **kwargs):
@@ -290,6 +325,7 @@ def import_genomes(ctx, db, directory, **kwargs):
 	existing = kwargs.pop('existing')
 	gset_id = kwargs.pop('gset_id')
 	recursive = kwargs.pop('recursive')
+	keep = kwargs.pop('keep')
 	assert not kwargs
 
 	directory = os.path.abspath(directory)
@@ -318,7 +354,7 @@ def import_genomes(ctx, db, directory, **kwargs):
 		directory = os.path.abspath(directory)
 		files_info = find_seq_files(directory, filter_ext=True,
 		                            filter_contents=True, warn_contents=True,
-		                            recursive=recursive)
+		                            recursive=recursive, allow_compressed=True)
 
 		# Write import .csv template
 		with open(csv_out, 'w') as fh:
@@ -335,6 +371,7 @@ def import_genomes(ctx, db, directory, **kwargs):
 
 				attrs = guess_fasta_attrs(info)
 				attrs['file'] = info.path
+				attrs['compression'] = info.compression
 				writer.writerow(attrs)
 
 		# Open it if possible
@@ -364,16 +401,24 @@ def import_genomes(ctx, db, directory, **kwargs):
 	added = 0
 	errors = 0
 	with csv_fh:
-		for file_path, genome_attrs in tqdm(parse_import_csv(csv_fh, db)):
+		for item in tqdm(parse_import_csv(csv_fh, db)):
+
+			store_kwargs = dict(
+				genome_sets=gsets,
+				compression='gzip',
+				src_compression=item.compression,
+				keep_src=keep,
+			)
+			store_kwargs.update(item.attrs)
 
 			# Try adding it
 			try:
-				db.store_genome(file_path, genome_sets=gsets, **genome_attrs)
+				db.store_genome(item.path, **store_kwargs)
 				added += 1
 			except Exception as e:
 				click.echo(
-					'Error adding file {}: {}'
-					.format(file_path, e),
+					'Error adding file {}: {}: {}'
+					.format(item.path, type(e), e),
 					err=True
 				)
 				errors += 1

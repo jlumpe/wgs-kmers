@@ -2,6 +2,7 @@ import os
 import shutil
 import json
 import re
+import gzip
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -18,7 +19,7 @@ from .migrate import get_alembic_config
 
 
 # Current database version number
-CURRENT_DB_VERSION = 3
+CURRENT_DB_VERSION = 4
 
 
 # This environment variable overrides all others to set current database
@@ -178,7 +179,12 @@ class Database(object):
 
 	def store_genome(self, file_, **kwargs):
 
-		# Create genome from kwargs
+		# Get function kwargs
+		src_compression = kwargs.pop('src_compression', None)
+		keep_src = kwargs.pop('keep_src', True)
+
+		# Create genome from remaining kwargs
+		kwargs.setdefault('compression', 'gzip')
 		genome = Genome(**kwargs)
 
 		session = self._ExpireSession()
@@ -186,17 +192,75 @@ class Database(object):
 		# Determine the file name
 		genome.filename = self._make_genome_file_name(genome, session)
 
-		# Copy to directory
+		# Path to store at
 		store_path = self._get_path('genomes', genome.filename)
 		if os.path.exists(store_path):
 			raise RuntimeError('{} already exists'.format(store_path))
 
-		if isinstance(file_, basestring):
-			shutil.copyfile(file_, store_path)
+		# See if we are moving/copying a file in the same format
+		same_format = genome.compression = src_compression
+		if isinstance(file_, basestring) and same_format:
+
+			# Copy it
+			if keep_src:
+				shutil.copyfile(file_, store_path)
+				src_moved = False
+
+			# Move it
+			else:
+				os.rename(file_, store_path)
+				src_moved = True
+
+			needs_delete = False
+
 		else:
-			contents = file_.read()
-			with open(store_path, 'w'):
-				store_path.write(contents)
+			src_moved = False
+
+			# Copying from file, different formats
+			if isinstance(file_, basestring):
+
+				if src_compression is None:
+					src_fh = open(file_, 'rb')
+
+				elif src_compression == 'gzip':
+					src_fh = gzip.open(file_, 'rb')
+
+				else:
+					raise ValueError(
+						'Don\'t know how to open files with compression "{}"'
+						.format(src_compression)
+					)
+
+				needs_delete = not keep_src
+
+			# Copying from file-like object
+			else:
+				if src_compression is None:
+					src_fh = file_
+
+				else:
+					raise ValueError('Can\'t add from compressed file object')
+
+				needs_delete = False
+
+			# Open destination using correct mode and format
+			write_mode = 'wb' if 'b' in src_fh.mode else 'w'
+
+			if genome.compression is None:
+				dest_fh = open(store_path, write_mode)
+
+			elif genome.compression == 'gzip':
+				dest_fh = gzip.open(store_path, write_mode)
+
+			else:
+				raise ValueError(
+					'Don\'t know how to store files with compression "{}"'
+					.format(genome.compression)
+				)
+
+			# Copy data
+			with dest_fh:
+				shutil.copyfileobj(src_fh, dest_fh)
 
 		# Try adding the genome
 		try:
@@ -204,10 +268,21 @@ class Database(object):
 			session.commit()
 			session.close()
 
-		# On error, remove the file
-		except Exception as e:
-			os.unlink(store_path)
+		# Try to reverse file operations on error
+		except Exception:
+
+			# Move stored file back or remove it
+			if src_moved:
+				os.rename(store_path, file_)
+			else:
+				os.unlink(store_path)
+
+			# Propagate exception
 			raise
+
+		# Remove the original if needed
+		if needs_delete:
+			os.unlink(file_)
 
 		return genome
 
@@ -225,7 +300,16 @@ class Database(object):
 
 	def open_genome(self, genome):
 		path = self._get_path('genomes', genome.filename)
-		return open(path)
+
+		if genome.compression is None:
+			return open(path)
+
+		elif genome.compression == 'gzip':
+			return gzip.open(path, 'r')
+
+		else:
+			raise RuntimeError('Can\'t open genome with compression "{}"'
+			                   .format(genome.compression))
 
 	def create_kmer_collection(self, **kwargs):
 
@@ -322,7 +406,9 @@ class Database(object):
 			val = genome.description
 
 		max_len = 25
-		ext = genome.file_format
+		ext = '.' + genome.file_format
+		if genome.compression == 'gzip':
+			ext += '.gz'
 
 		base = re.sub(r'\W+', '_', val[:max_len])
 		filename = base + ext

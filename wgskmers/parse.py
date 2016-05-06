@@ -51,7 +51,7 @@ class SeqFileInfo(object):
 		if self.compression == 'gzip':
 
 			# Check gzip magic number
-			with open(path, 'rb') as gzfh:
+			with open(self.abspath, 'rb') as gzfh:
 				magic = gzfh.read(2)
 
 			if magic != '\x1f\x8b':
