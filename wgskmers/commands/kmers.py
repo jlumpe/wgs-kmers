@@ -12,6 +12,7 @@ from .util import choose_db, with_db
 from wgskmers.database import Genome, KmerSetCollection, KmerSet
 from wgskmers.kmers import nucleotides, KmerFinder, KmerSpec
 from wgskmers.database.store import kmer_storage_formats
+from wgskmers.parse import vec_from_records
 import wgskmers.multiprocess as kmp
 
 
@@ -24,27 +25,12 @@ class RefCalculator(object):
 
 	@classmethod
 	def calc_ref(cls, genome):
-
-		# Parse it
 		with cls.db.open_genome(genome) as fh:
+
 			records = SeqIO.parse(fh, genome.file_format)
 
-			# Vector to store k-mers
-			vec = None
-
-			# Go through the records
-			for record in records:
-				finder = cls.spec.find(record.seq, revcomp=True)
-
-				# If assembled, get boolean vector
-				if genome.is_assembled:
-					vec = finder.bool_vec(out=vec)
-
-				# Otherwise, get counts (why not)
-				else:
-					vec = finder.counts_vec(out=vec)
-
-			return vec
+			# If assembled, get boolean vector. Otherwise get counts (why not)
+			return vec_from_records(records, counts=not genome.is_assembled)
 
 
 @click.group(name='refs',
@@ -124,7 +110,7 @@ def makec(ctx, db, k, prefix, title, format):
 	)
 
 
-@kmers_group.command(short_help='Caluclate k-mer sets and add to collection')
+@kmers_group.command(short_help='Calculate k-mer sets and add to collection')
 @click.argument('collection_id', type=int)
 @with_db(confirm=True)
 def calc(ctx, db, collection_id):

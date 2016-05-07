@@ -550,6 +550,7 @@ class KmerSetAdder(object):
 			session = self.db._ExpireSession()
 			session.add(kmer_set)
 			session.commit()
+			session.close()
 
 		# On error, remove the file
 		except Exception as e:
