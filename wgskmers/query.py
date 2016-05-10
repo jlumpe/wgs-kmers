@@ -350,9 +350,9 @@ def mp_query(query, db, collection, ref_sets, metrics, **kwargs):
 class CoordsQueryWorker(object):
 
 	@classmethod
-	def init(cls, query_coords, ref_coords, metric_names, dest):
+	def init(cls, query_coords, loader, metric_names, dest):
 		cls.query_coords = query_coords
-		cls.ref_coords = ref_coords
+		cls.loader = loader
 		cls.metrics = [query_metrics[name] for name in metric_names]
 		cls.dest = dest
 
@@ -360,8 +360,10 @@ class CoordsQueryWorker(object):
 		np.seterr(divide='ignore', invalid='ignore')
 
 	@classmethod
-	def calc_score(cls, ref_idx):
-		ref_coords = cls.ref_coords[ref_idx]
+	def calc_score(cls, args):
+		ref_idx, ref_set = args
+
+		ref_coords = cls.loader.load_coords(ref_set)
 
 		for k, metric in enumerate(cls.metrics):
 			for j, query_coords in enumerate(cls.query_coords):
@@ -390,24 +392,18 @@ def mp_query_coords(query, db, collection, ref_sets, metrics, **kwargs):
 	for i in range(query.shape[0]):
 		query_coords[i] = vec_to_coords(query[i, :])
 
-	# Reference coords in shared memory
-	if progress:
-		import click
-		click.echo('Loading reference k-mer sets...', err=True)
-	ref_coords = loader.load_coords_col(ref_sets, cls=kmp.SharedKmerCoordsCollection)
-
 	# Create pool
-	init_args = (query_coords, ref_coords, metrics, scores)
+	init_args = (query_coords, loader, metrics, scores)
 	pool = mp.Pool(processes=nworkers, initializer=CoordsQueryWorker.init,
 	               initargs=init_args)
 
-	# Start tasks
-	indices = range(len(ref_sets))
-	results = pool.imap_unordered(CoordsQueryWorker.calc_score, indices)
+	# Start workers
+	tasks = list(enumerate(ref_sets))
+	results = pool.imap_unordered(CoordsQueryWorker.calc_score, tasks)
 
 	# Monitor progress
 	if progress:
-		pbar = tqdm(total=len(indices), desc='Querying reference database')
+		pbar = tqdm(total=len(tasks), desc='Querying reference database')
 		with pbar:
 			for r in results:
 				pbar.update(1)
