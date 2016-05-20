@@ -1,128 +1,197 @@
 import numpy as np
 from tqdm import tqdm
 
-from wgskmers.util import kwargs_finished
 import numba as nb
 import numba.cuda as nb_cuda
 
-from .kmers import vec_to_coords
+from .kmers import vec_to_coords, KmerCoordsCollection
+from .util import kwargs_finished
 
 
-# Numba function signatures
-coords_nb_signature = [
-	(nb.uint32[:], nb.uint32[:], nb.float32[:]),
-	(nb.uint64[:], nb.uint64[:], nb.float32[:]),
-	(nb.int32[:], nb.int32[:], nb.float32[:]),
-	(nb.int64[:], nb.int64[:], nb.float32[:]),
-]
 
 
 class QueryMetric(object):
-	def __init__(self, key, title, py_func, is_distance):
-		self.key = key
+	"""A distance or similarity metric for kmer sets
+
+	May not actually obey the triangle inequality, see the true_metric
+	property.
+	"""
+
+	def __init__(self, py_func, title, return_type, is_distance, **kwargs):
 		self.title = title
-		self.py_func = py_func
-		self.nb_funcs = dict()
-		self.coords_funcs = dict()
+
+		self._py_func = py_func
+		self._nb_array_funcs = dict()
+		self._nb_coords_single = None
+		self._nb_coords_vectorized = None
+
+		self.return_type = np.dtype(return_type)
 		self.is_distance = is_distance
 
-	def __call__(self, query_vec, ref_vec):
-		return self.py_func(query_vec, ref_vec)
+		self.key = kwargs.pop('key', py_func.__name__)
+		self.true_metric = kwargs.pop('true_metric', False)
+		kwargs_finished(kwargs)
 
-	def nb(self, query_vec, ref_vec, out=None):
-		return self._call_nb('cpu', query_vec, ref_vec, out)
+	def __call__(self, query_vecs, ref_vecs, out=None, target=None):
+		"""Evaluate the metric on array-based data
 
-	def nb_parallel(self, query_vec, ref_vec, out=None):
-		return self._call_nb('parallel', query_vec, ref_vec, out)
+		The target argument specifies the numba compiled target to use
+		(cpu, parallel, or cuda), or 'python' for the pure python function.
+		If None it will default to 'cpu', if that is unavailable the python
+		function wil be used.
+		"""
 
-	def nb_cuda(self, query_vec, ref_vec, out=None):
-		return self._call_nb('cuda', query_vec, ref_vec, out)
+		if target is None:
+			func = self._nb_array_funcs.get('cpu', self.py_func)
 
-	def coords(self, query_vec, ref_vec, out=None):
-		return self._call_coords('cpu', query_vec, ref_vec, out)
+		elif target == 'python':
+			func = self._py_func
 
-	def coords_parallel(self, query_vec, ref_vec, out=None):
-		return self._call_coords('parallel', query_vec, ref_vec, out)
-
-	def coords_cuda(self, query_vec, ref_vec, out=None):
-		return self._call_coords('cuda', query_vec, ref_vec, out)
-
-	def _call_nb(self, target, query_vec, ref_vec, out=None):
-		func = self.nb_funcs[target]
-		if func is None:
-			raise RuntimeError(
-				'Target "{}" not supported on this system'
-				.format(target)
-			)
 		else:
-			return func(query_vec, ref_vec, out)
+			try:
+				func = self.nb_array_funcs[target]
 
-	def _call_coords(self, target, query_vec, ref_vec, out=None):
-		func = self.coords_funcs[target]
-		if func is None:
-			raise RuntimeError(
-				'Target "{}" not supported on this system'
-				.format(target)
-			)
+			except KeyError:
+				raise RuntimeError(
+					'Target "{}" not supported on this system'
+					.format(target)
+				)
+
+		return func(query_vecs, ref_vecs, out=out)
+
+	def coords(self, query_coords, ref_coords):
+		"""Evaluate the metric on two sets in coordinate format"""
+		return self._nb_coords_single(query_coords, ref_coords)
+
+	def coords_multi(self, query_sets, ref_sets, out=None):
+		"""Vectorized version that uses collection of query and/or ref coords"""
+		query_multi = isinstance(query_sets, KmerCoordsCollection)
+		refs_multi = isinstance(ref_sets, KmerCoordsCollection)
+
+		# Convert arguments to flat arrays of coords and lengths
+		if query_multi:
+			qc_flat = query_sets.coords_array
+			q_bounds = query_sets.bounds
 		else:
-			return func(query_vec, ref_vec, out)
+			qc_flat = query_sets
+			q_bounds = np.asarray([0, len(query_sets)])
 
-	def numba_func(self, signature, layout, **kwargs):
-		nb_targets = kwargs.pop('nb_targets', ['cpu', 'parallel', 'cuda'])
-		assert not kwargs
+		if refs_multi:
+			rc_flat = ref_sets.coords_array
+			r_bounds = ref_sets.bounds
+		else:
+			rc_flat = ref_sets
+			r_bounds = np.asarray([0, len(ref_sets)])
 
+		# Allocate output array if needed
+		if out is None:
+			out_shape = []
+			if query_multi:
+				out_shape.append(len(q_bounds) - 1)
+			elif refs_multi:
+				out_shape.append(len(r_bounds) - 1)
+			out = np.empty(out_shape, dtype=self.return_type)
+
+		# import ipdb
+		# ipdb.set_trace()
+
+		# Reshape out into a 2d array for the vectorized function
+		out_reshaped = out.reshape((len(q_bounds) - 1, len(r_bounds) - 1))
+
+		# Call vectorized version of function
+		self._nb_coords_vectorized(qc_flat, q_bounds, rc_flat, r_bounds,
+		                           out_reshaped)
+
+		# Return output array in original shape
+		return out
+
+	def nb_array_func(self, *args, **kwargs):
+		"""Creates decorator to register the numba guvectorized array function"""
+
+		nb_targets = kwargs.pop('targets', ['cpu', 'parallel', 'cuda'])
+		kwargs_finished(kwargs)
+
+		# Create signatures
+		nb_return_type = nb.from_dtype(self.return_type)
+		signatures = [(nb.boolean[:], nb.boolean[:], nb_return_type[:])]
+
+		# Create decorator
 		def decorator(func):
 			for target in nb_targets:
 
 				if target == 'cuda' and not nb_cuda.is_available():
-					self.nb_funcs[target] = None
+					continue
 
-				else:
-					guv_dec = nb.guvectorize(signature, layout, target=target,
-					                         nopython=True)
-					self.nb_funcs[target] = guv_dec(func)
-
-			return func
-
-		return decorator
-
-	def coords_func(self, signature, layout, **kwargs):
-		nb_targets = kwargs.pop('nb_targets', ['cpu', 'parallel', 'cuda'])
-		assert not kwargs
-
-		def decorator(func):
-			for target in nb_targets:
-
-				if target == 'cuda' and not nb.cuda.is_available():
-					self.coords_funcs[target] = None
-
-				else:
-					guv_dec = nb.guvectorize(signature, layout, target=target,
-					                         nopython=True)
-					self.coords_funcs[target] = guv_dec(func)
+				guv_dec = nb.guvectorize(signatures, '(n),(n)->()',
+				                         target=target, nopython=True)
+				self._nb_array_funcs[target] = guv_dec(func)
 
 			return func
 
-		return decorator
+		# If function passed directory, call decorator on it and return
+		if args:
+			func, = args
+			return decorator(func)
+
+		# Otherwise return the decorator
+		else:
+			return decorator
+
+	def nb_coords_func(self, single_func):
+		"""Decorator to register the numba coordinate function"""
+
+		# JIT single version
+		single_jit = nb.jit(nopython=True)(single_func)
+		self._nb_coords_single = nb.jit(nopython=True)(single_func)
+
+		# JIT vectorized version
+		@nb.jit(nopython=True)
+		def vectorized_coords_func(qc_flat, q_bounds, rc_flat, r_bounds, out):
+			"""
+			Args:
+				qc_flat: Coordinates of each query set flattened into a
+					1d array.
+				q_bounds: Slices of qc_flat yielding each set of coordinates.
+					Last value should be len(qc_flat).
+				rc_flat: Coordinates of each reference set flattened into a
+					1d array.
+				r_bounds: Slices of qc_flat yielding each set of coordinates.
+					Last value should be len(rc_flat).
+			"""
+
+			for q_i in range(len(q_bounds) - 1):
+				q_begin, q_end = q_bounds[q_i:q_i+2]
+				query = qc_flat[q_begin:q_end]
+
+				for r_i in range(len(r_bounds) - 1):
+					r_begin, r_end = r_bounds[r_i:r_i+2]
+					ref = rc_flat[r_begin:r_end]
+
+					out[q_i, r_i] = single_jit(query, ref)
+
+		self._nb_coords_vectorized = vectorized_coords_func
+
+		return self._nb_coords_single
 
 
 query_metrics = dict()
 
-def metric(title, is_distance):
+def metric(*args, **kwargs):
+	"""Decorator to create and register metric by python function"""
 	def decorator(py_func):
-		key = py_func.__name__
-		qm = QueryMetric(key, title, py_func, is_distance)
-		query_metrics[key] = qm
+		qm = QueryMetric(py_func, *args, **kwargs)
+		query_metrics[qm.key] = qm
 		return qm
 	return decorator
 
 
-@metric('Hamming distance', is_distance=True)
+##### Hamming Distance ######
+
+@metric('Hamming distance', return_type=np.uint32, is_distance=True)
 def hamming(query, ref, out=None):
 	return (query != ref).sum(axis=-1, out=out)
 
-@hamming.numba_func([(nb.bool_[:], nb.bool_[:], nb.uint32[:])],
-                    '(n),(n)->()')
+@hamming.nb_array_func
 def nb_hamming(query, ref, out):
 
 	dist = 0
@@ -132,13 +201,13 @@ def nb_hamming(query, ref, out):
 
 	out[0] = dist
 
-@hamming.coords_func(coords_nb_signature, '(n),(m)->()')
-def coords_hamming(query, ref, out):
+@hamming.nb_coords_func
+def coords_hamming(query, ref):
 
 	n = query.shape[0]
 	m = ref.shape[0]
 
-	out[0] = 0
+	dist = 0
 
 	i = 0
 	j = 0
@@ -147,7 +216,7 @@ def coords_hamming(query, ref, out):
 		r = ref[j]
 
 		if q != r:
-			out[0] += 1
+			dist += 1
 
 		if q <= r:
 			i += 1
@@ -155,11 +224,15 @@ def coords_hamming(query, ref, out):
 		if r <= q:
 			j += 1
 
-	out[0] += n - i
-	out[0] += m - j
+	dist += n - i
+	dist += m - j
+
+	return dist
 
 
-@metric('Jaccard Index', is_distance=False)
+##### Jaccard Index #####
+
+@metric('Jaccard Index', return_type=np.float32, is_distance=False)
 def jaccard(query, ref, out=None):
 
 	if out is None:
@@ -174,8 +247,7 @@ def jaccard(query, ref, out=None):
 	else:
 		return out
 
-@jaccard.numba_func([(nb.bool_[:], nb.bool_[:], nb.float32[:])],
-                    '(n),(n)->()')
+@jaccard.nb_array_func
 def nb_jaccard(query, ref, out):
 
 	union = 0
@@ -188,24 +260,21 @@ def nb_jaccard(query, ref, out):
 	out[0] = intersection
 	out[0] /= union
 
-@jaccard.coords_func(coords_nb_signature, '(n),(m)->()')
-def coords_jaccard(query, ref, out):
+@jaccard.nb_coords_func
+def coords_jaccard(query, ref):
 
-	n = query.shape[0]
-	m = ref.shape[0]
+	N = query.shape[0]
+	M = ref.shape[0]
 
-	intersection = 0
 	union = 0
 
 	i = 0
 	j = 0
-	while i < n and j < m:
+	while i < N and j < M:
 		q = query[i]
 		r = ref[j]
 
 		union += 1
-		if q == r:
-			intersection += 1
 
 		if q <= r:
 			i += 1
@@ -213,14 +282,15 @@ def coords_jaccard(query, ref, out):
 		if r <= q:
 			j += 1
 
-	union += n - i
-	union += m - j
+	union += N - i
+	union += M - j
 
-	out[0] = intersection
-	out[0] /= union
+	return nb.float32(N + M - union) / union
 
 
-@metric('Asymmetrical Jaccard', is_distance=False)
+##### Asymmetrical Jaccard #####
+
+@metric('Asymmetrical Jaccard', return_type=np.float32, is_distance=False)
 def asym_jacc(query, ref, out=None):
 
 	if out is None:
@@ -235,8 +305,7 @@ def asym_jacc(query, ref, out=None):
 	else:
 		return out
 
-@asym_jacc.numba_func([(nb.bool_[:], nb.bool_[:], nb.float32[:])],
-                      '(n),(n)->()')
+@asym_jacc.nb_array_func
 def nb_asym_jacc(query, ref, out):
 
 	ref_weight = 0
@@ -249,18 +318,17 @@ def nb_asym_jacc(query, ref, out):
 	out[0] = intersection
 	out[0] /= ref_weight
 
+@asym_jacc.nb_coords_func
+def coords_asym_jacc(query, ref):
 
-@asym_jacc.coords_func(coords_nb_signature, '(n),(m)->()')
-def coords_asym_jacc(query, ref, out):
-
-	n = query.shape[0]
-	m = ref.shape[0]
+	N = query.shape[0]
+	M = ref.shape[0]
 
 	intersection = 0
 
 	i = 0
 	j = 0
-	while i < n and j < m:
+	while i < N and j < M:
 		q = query[i]
 		r = ref[j]
 
@@ -273,9 +341,10 @@ def coords_asym_jacc(query, ref, out):
 		if r <= q:
 			j += 1
 
-	out[0] = intersection
-	out[0] /= m
+	return nb.float32(intersection) / M
 
+
+##### Parallelized query functions #####
 
 class QueryWorker(object):
 
@@ -296,7 +365,7 @@ class QueryWorker(object):
 		ref_vecs = cls.loader.load_array(ref_sets, dtype=bool)
 
 		for i, metric in enumerate(cls.metrics):
-			scores = metric.nb(cls.query.np_array[:, None, :], ref_vecs[None, ...])
+			scores = metric(cls.query.np_array[:, None, :], ref_vecs[None, ...])
 			cls.dest[i, index:index + len(ref_sets), :] = scores.T
 
 

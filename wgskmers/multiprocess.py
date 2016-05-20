@@ -93,6 +93,7 @@ class SharedKmerCoordsCollection(KmerCoordsCollection):
 
 	def __setstate__(self, state):
 		self.shared_array, self.bounds = state
+		self.coords_array = self.shared_array.np_array
 
 	@classmethod
 	def empty(cls, lengths):
