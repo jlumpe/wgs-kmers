@@ -101,10 +101,16 @@ def ezutils(util, *args, **kwargs):
 		return response
 		
 
-def ids_for_accession(acc, db, field='Accession'):
+def ids_for_accession(acc, db, field=None):
 	"""Query nucleotide GI numbers by accession"""
 
-	if field is not None:
+	if field is None:
+		if db == 'assembly':
+			field = 'Assembly Accession'
+		else:
+			field = 'Accession'
+
+	if field is not False:
 		term = '"{}"[{}]'.format(acc, field)
 	else:
 		term = acc
@@ -125,7 +131,7 @@ def get_summary(id, db):
 def genome_attrs_from_gi(id, db):
 	"""Get best values for Genome model attributes given genbank GI"""
 
-	attrs = dict(gb_id=int(id), gb_db=db, is_assembled=True)
+	attrs = dict(gb_id=int(id), gb_db=db)
 
 	summary = get_summary(id=id, db=db)
 
