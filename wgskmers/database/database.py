@@ -19,7 +19,7 @@ from .migrate import get_alembic_config
 
 
 # Current database version number
-CURRENT_DB_VERSION = 4
+CURRENT_DB_VERSION = 5
 
 
 # This environment variable overrides all others to set current database
