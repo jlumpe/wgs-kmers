@@ -1,13 +1,10 @@
-""""""
+"""Commands for managing registered databases"""
 
 import os
 import string
 
 import click
 
-from wgskmers import database
-from wgskmers.config import get_config
-from wgskmers.database.upgrade import upgrader
 from .util import choose_db_path
 
 
@@ -27,6 +24,8 @@ def database_group():
 @database_group.command()
 def list():
 	"""List registered databases"""
+	from wgskmers.config import get_config
+	from wgskmers import database
 
 	# Get config databases
 	config = get_config()
@@ -77,6 +76,8 @@ def list():
 @database_group.command()
 def which():
 	"""Get the currently active database"""
+	from wgskmers import database
+
 	path, method = database.get_current_db()
 
 	if path is not None:
@@ -115,6 +116,8 @@ def init(directory, set_default=False, name=None):
 	Create a new database in the specified directory, or the current one if
 	none specified.
 	"""
+	from wgskmers.config import get_config
+
 	config = get_config()
 
 	if directory is None:
@@ -171,6 +174,8 @@ def set_default(path=None, name=None):
 	of another currently registered database. If no path given, will check if
 	current working directory is within a database.
 	"""
+	from wgskmers.config import get_config
+	from wgskmers import database
 
 	config = get_config()
 	registered_dbs = config.get_registered_dbs()
@@ -233,6 +238,8 @@ def register(name, path=None):
 	Register an existing database in the global configuration file. If no
 	path given, will check if current working directory is within a database.
 	"""
+	from wgskmers.config import get_config
+	from wgskmers import database
 
 	config = get_config()
 	registered_dbs = config.get_registered_dbs()
@@ -292,6 +299,7 @@ def unregister(name):
 	Un-register a currently registered database. The database itself is left
 	alone. Type "default" to un-register the default database.
 	"""
+	from wgskmers.config import get_config
 
 	config = get_config()
 	registered_dbs = config.get_registered_dbs()
@@ -321,6 +329,8 @@ def unregister(name):
 @choose_db_path()
 def upgrade(db_path):
 	"""Upgrade a database to the latest version"""
+	from wgskmers.database.upgrade import upgrader
+
 	upgrader.upgrade(db_path)
 	click.echo('Success!')
 
@@ -329,4 +339,6 @@ def upgrade(db_path):
 @choose_db_path()
 def version(db_path):
 	"""Get version of existing database"""
+	from wgskmers import database
+
 	click.echo(database.get_db_version(db_path))

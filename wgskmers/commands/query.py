@@ -6,23 +6,22 @@ from csv import DictWriter
 from collections import namedtuple
 
 import click
-import numpy as np
 
-from wgskmers.database import KmerSetCollection
-from wgskmers.kmers import KmerSpec
-from wgskmers.query import query_metrics, mp_query_coords
-from wgskmers.parse import find_seq_files, SeqFileInfo, parse_to_array
-from wgskmers.util import kwargs_finished
-from wgskmers import genbank
 from .util import with_db
 
 
 logger = logging.getLogger()
 
 
+query_metric_keys = ['hamming', 'jaccard', 'asym_jacc']
+
+
 QueryMatch = namedtuple('QueryMatch', ['query', 'ref', 'metric', 'rank', 'score'])
 
 def top_matches(queries, refs, metrics, scores, n):
+	import numpy as np
+	from wgskmers.query import query_metrics
+
 	for i, query in enumerate(queries):
 		for j, metric_name in enumerate(metrics):
 
@@ -45,7 +44,9 @@ def top_matches(queries, refs, metrics, scores, n):
 					score=scores_slice[idx],
 				)
 
+
 def matches_to_csv(fh, queries, refs, metrics, scores, topn):
+	from wgskmers.genbank import get_record_url
 
 	writer = DictWriter(fh, [
 		'query_file',
@@ -67,9 +68,9 @@ def matches_to_csv(fh, queries, refs, metrics, scores, topn):
 
 		if genome.gb_db is not None:
 			if genome.gb_acc is not None:
-				link = genbank.get_record_url(genome.gb_acc, genome.gb_db)
+				link = get_record_url(genome.gb_acc, genome.gb_db)
 			elif genome.gb_id is not None:
-				link = genbank.get_record_url(genome.gb_id, genome.gb_db)
+				link = get_record_url(genome.gb_id, genome.gb_db)
 			else:
 				link = None
 		else:
@@ -90,6 +91,8 @@ def matches_to_csv(fh, queries, refs, metrics, scores, topn):
 
 
 def print_matches(queries, refs, metrics, scores, topn):
+	from wgskmers.query import query_metrics
+
 	for i, query in enumerate(queries):
 
 		click.echo('\n\n>{}'.format(query))
@@ -117,7 +120,7 @@ def print_matches(queries, refs, metrics, scores, topn):
 	                   'fastq-illumina']),
 	help='File format, as argument to Bio.SeqIO.parse. If omitted, will infer '
 	     'from file extensions.')
-@click.option('-m', '--metric', type=click.Choice(query_metrics.keys() + ['all']),
+@click.option('-m', '--metric', type=click.Choice(query_metric_keys + ['all']),
               default='all', help='Query metric to use')
 @click.option('-n', '--n-results', type=int, default=10,
               help='Number of results to return, sorted by best')
@@ -131,6 +134,11 @@ def print_matches(queries, refs, metrics, scores, topn):
 @with_db(choose=True)
 def query_command(ctx, db, collection_id, src, **kwargs):
 	"""Query a sequence against the reference database"""
+
+	from wgskmers.database import KmerSetCollection
+	from wgskmers.kmers import KmerSpec
+	from wgskmers.query import mp_query_coords
+	from wgskmers.parse import find_seq_files, SeqFileInfo, parse_to_array
 
 	src = os.path.abspath(src)
 
@@ -192,7 +200,7 @@ def query_command(ctx, db, collection_id, src, **kwargs):
 
 	# Metrics
 	if metric_choice == 'all':
-		metric_names = query_metrics.keys()
+		metric_names = query_metric_keys
 	else:
 		metric_names = [metric_choice]
 

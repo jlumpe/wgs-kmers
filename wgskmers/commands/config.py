@@ -1,4 +1,4 @@
-""""""
+"""Commands for editing configuration"""
 
 import shutil
 

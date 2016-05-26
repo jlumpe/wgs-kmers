@@ -10,11 +10,6 @@ from collections import Counter
 
 import click
 from tqdm import tqdm
-from Bio import SeqIO
-
-from wgskmers.kmers import KmerSpec, nucleotides
-from wgskmers.parse import ProgressSeqParser, find_seq_files, SeqFileInfo
-from wgskmers.util import iterator_empty
 
 
 logger = logging.getLogger()
@@ -215,6 +210,11 @@ def find_command(src, dest, prefix, k, **kwargs):
 	each file in directory given by [SRC], writing output to separate files
 	in directory given by [DEST].
 	"""
+
+	from Bio import SeqIO
+	from wgskmers.kmers import KmerSpec, nucleotides
+	from wgskmers.parse import ProgressSeqParser, find_seq_files, SeqFileInfo
+	from wgskmers.util import iterator_empty
 
 	show_progress = kwargs.pop('progress', False)
 	output_format = kwargs.pop('output_format', 'list')

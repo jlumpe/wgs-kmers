@@ -6,17 +6,6 @@ from textwrap import dedent
 
 import click
 
-from wgskmers import database
-from wgskmers.config import get_config
-
-
-choose_db_doc = dedent("""
-
-	Specify database to use explicitly with "--db" or "--default" commands.
-	If neither is given will use either database in the current working
-	directory or the one set as default, with confirmation for write ops.
-""")
-
 
 def choose_db(pass_opts=False, pass_context=False):
 	"""Decorator for a command/group that chooses a database to work with
@@ -30,6 +19,9 @@ def choose_db(pass_opts=False, pass_context=False):
 
 		@wraps(func)
 		def wrapper(ctx, *args, **kwargs):
+			from wgskmers.config import get_config
+			from wgskmers.database import (open_database,
+				get_current_db, get_default_db)
 
 			config = get_config()
 
@@ -50,7 +42,7 @@ def choose_db(pass_opts=False, pass_context=False):
 					raise click.ClickException(
 						'Cant use both --db and --default options')
 
-				db_path = database.get_default_db()
+				db_path = get_default_db()
 				if db_path is None:
 					raise click.ClickException('No default database set')
 
@@ -71,20 +63,25 @@ def choose_db(pass_opts=False, pass_context=False):
 
 			# Determine automatically
 			else:
-				db_path, method = database.get_current_db()
+				db_path, method = get_current_db()
 				if db_path is None:
 					raise click.ClickException('No database currently active')
 
 				ctx.obj['db_auto'] = method
 
 			# Open database and add to context
-			ctx.obj['db'] = database.open_database(db_path)
+			ctx.obj['db'] = open_database(db_path)
 
 			# Call wrapped func
 			return func(*args, **kwargs)
 
 		if wrapper.__doc__ is not None:
-			wrapper.__doc__ += choose_db_doc
+			wrapper.__doc__ += dedent("""
+				Specify database to use explicitly with "--db" or "--default"
+				commands. If neither is given will use either database in the
+				current working directory or the one set as default, with
+				confirmation for write ops.
+				""").strip()
 
 		# Add click decorators for options and context passing
 		decorators = [
@@ -114,6 +111,7 @@ def with_db(confirm=False, choose=False):
 
 		@wraps(func)
 		def wrapper(ctx, *args, **kwargs):
+			from wgskmers.database.database import DEFAULT_DB_PATH_VAR
 
 			# Check if current database chosen automatically
 			auto_method = ctx.obj['db_auto']
@@ -126,7 +124,7 @@ def with_db(confirm=False, choose=False):
 					method_str = 'default database in config file'
 				elif auto_method == 'environ':
 					method_str = ('from environment variable {}'
-					              .format(database.DEFAULT_DB_PATH_VAR))
+					              .format(DEFAULT_DB_PATH_VAR))
 				elif auto_method == 'override':
 					method_str = 'overridden in shell'
 				else:
@@ -170,6 +168,8 @@ def choose_db_path(pass_opts=False):
 
 		@wraps(func)
 		def wrapper(*args, **kwargs):
+			from wgskmers.config import get_config
+			from wgskmers.database import get_current_db, get_default_db
 
 			config = get_config()
 
@@ -195,12 +195,12 @@ def choose_db_path(pass_opts=False):
 					)
 
 			elif default_db:
-				db_path = database.get_default_db()
+				db_path = get_default_db()
 				if db_path is None:
 					raise click.ClickException('No default database set')
 
 			else:
-				db_path, method = database.get_current_db()
+				db_path, method = get_current_db()
 				if db_path is None:
 					raise click.ClickException('No database currently active')
 				else:
