@@ -1,4 +1,4 @@
-""""""
+"""Commands for managing stored reference genomes"""
 
 import os
 import re
@@ -9,9 +9,6 @@ from csv import DictWriter, DictReader
 import click
 from tqdm import tqdm
 
-from wgskmers.database import models
-from wgskmers.parse import find_seq_files
-from wgskmers.genbank import extract_acc
 from .util import choose_db, with_db
 
 
@@ -43,6 +40,7 @@ def import_str(obj, lower=False):
 
 
 def guess_fasta_attrs(info):
+	from wgskmers.genbank import extract_acc
 
 	assert info.seq_format == 'fasta'
 	attrs = dict(file_format='fasta')
@@ -119,6 +117,7 @@ genome_import_cols.append('compression')
 ImportFileItem = namedtuple('ImportFileItem', ['path', 'compression', 'attrs'])
 
 def parse_import_csv(fh, db):
+	from wgskmers.database.models import Genome
 
 	session = db.get_session()
 
@@ -199,7 +198,7 @@ def parse_import_csv(fh, db):
 				continue
 
 			# Check already in database
-			found = (session.query(models.Genome)
+			found = (session.query(Genome)
 			                .filter_by(**{uq_col: val})
 			                .first())
 			if found is not None:
@@ -247,9 +246,10 @@ def genomes_group():
 @with_db()
 def list(ctx, db, dest, out_csv=False):
 	"""List reference genomes"""
+	from wgskmers.database.models import Genome
 
 	session = db.get_session()
-	genomes = session.query(models.Genome).all()
+	genomes = session.query(Genome).all()
 
 	if out_csv:
 
@@ -269,9 +269,10 @@ def list(ctx, db, dest, out_csv=False):
 @click.argument('dest', type=click.File('w'), default='-')
 @with_db()
 def list_sets(ctx, db, dest, out_csv=False):
+	from wgskmers.database.models import GenomeSet
 
 	session = db.get_session()
-	gsets = session.query(models.GenomeSet).all()
+	gsets = session.query(GenomeSet).all()
 
 	if out_csv:
 
@@ -292,14 +293,15 @@ def list_sets(ctx, db, dest, out_csv=False):
 @click.argument('description', required=False)
 @with_db(confirm=True)
 def make_set(ctx, db, name, description=None):
+	from wgskmers.database.models import GenomeSet
 
 	session = db.get_session()
 
-	if session.query(models.GenomeSet).filter_by(name=name).count() > 0:
+	if session.query(GenomeSet).filter_by(name=name).count() > 0:
 		raise click.ClickException('Genome set already exists with name "{}"'
 		                           .format(name))
 
-	gset = models.GenomeSet(name=name, description=description)
+	gset = GenomeSet(name=name, description=description)
 
 	session.add(gset)
 	session.commit()
@@ -323,6 +325,8 @@ def make_set(ctx, db, name, description=None):
 @click.argument('directory', type=click.Path(exists=True))
 @with_db(confirm=True)
 def import_genomes(ctx, db, directory, **kwargs):
+	from wgskmers.database.models import GenomeSet
+	from wgskmers.parse import find_seq_files
 
 	csv_out = kwargs.pop('csv_out')
 	existing = kwargs.pop('existing')
@@ -337,7 +341,7 @@ def import_genomes(ctx, db, directory, **kwargs):
 	# Get genome set
 	if gset_id is not None:
 		session = db.get_session()
-		gset = session.query(models.GenomeSet).get(gset_id)
+		gset = session.query(GenomeSet).get(gset_id)
 		session.close()
 
 		if gset is None:

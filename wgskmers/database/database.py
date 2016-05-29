@@ -10,7 +10,7 @@ from alembic import command as alembic_command
 import numpy as np
 
 from wgskmers.util import rmpath, kwargs_finished
-from wgskmers.config import config, save_config
+from wgskmers.config import get_config
 from wgskmers.kmers import KmerSpec, KmerCoordsCollection
 from .models import *
 from .sqla import ReadOnlySession
@@ -19,7 +19,7 @@ from .migrate import get_alembic_config
 
 
 # Current database version number
-CURRENT_DB_VERSION = 4
+CURRENT_DB_VERSION = 5
 
 
 # This environment variable overrides all others to set current database
@@ -91,8 +91,9 @@ def get_current_db(cwd=None):
 		return parent_dir, 'cwd'
 
 	# Check config file
-	if config.has_option('databases', 'default'):
-		return config.get('databases', 'default'), 'config'
+	config_default = get_config().get_default_db()
+	if config_default is not None:
+		return config_default, 'config'
 
 	# Check default environment variable
 	if DEFAULT_DB_PATH_VAR in os.environ:
@@ -106,8 +107,9 @@ def get_default_db():
 	"""Get database registered as default"""
 
 	# Check config file
-	if config.has_option('databases', 'default'):
-		return config.get('databases', 'default')
+	config_default = get_config().get_default_db()
+	if config_default is not None:
+		return config_default
 
 	# Check default environment variable
 	if DEFAULT_DB_PATH_VAR in os.environ:
@@ -115,30 +117,6 @@ def get_default_db():
 
 	# Not found
 	return None
-
-
-def get_registered_dbs():
-	"""Get list of databases in config file"""
-	return {name: config.get('databases', name) for name
-	        in config.options('databases')}
-
-
-def register_db(path, name, overwrite=False):
-	"""Add database to configuration file"""
-	if config.has_option('databases', name) and not overwrite:
-		raise RuntimeError('Database {} exists, refusing to overwrite')
-
-	config.set('databases', name, path)
-	save_config()
-
-
-def unregister_db(name):
-	"""Remove database from configuration file"""
-	if not config.has_option('databases', name):
-		raise RuntimeError('Database {} not registered')
-
-	config.remove_option('databases', name)
-	save_config()
 
 
 class Database(object):

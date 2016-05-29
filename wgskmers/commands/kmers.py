@@ -1,19 +1,11 @@
-""""""
+"""Commands for managed stored k-mer sets"""
 
-import multiprocessing as mp
 from itertools import izip
 
 import click
-import sqlalchemy as sqla
 from tqdm import tqdm
-from Bio import SeqIO
 
 from .util import choose_db, with_db
-from wgskmers.database import Genome, KmerSetCollection, KmerSet
-from wgskmers.kmers import nucleotides, KmerFinder, KmerSpec
-from wgskmers.database.store import kmer_storage_formats
-from wgskmers.parse import vec_from_records
-import wgskmers.multiprocess as kmp
 
 
 class RefCalculator(object):
@@ -25,6 +17,9 @@ class RefCalculator(object):
 
 	@classmethod
 	def calc_ref(cls, genome):
+		from Bio import SeqIO
+		from wgskmers.parse import vec_from_records
+
 		with cls.db.open_genome(genome) as fh:
 
 			records = SeqIO.parse(fh, genome.file_format)
@@ -48,6 +43,7 @@ def listc(ctx, db):
 
 	The ID of the collection is listed at the beginning of the line.
 	"""
+	from wgskmers.database.models import KmerSetCollection
 
 	session = db.get_session()
 	for collection in session.query(KmerSetCollection).all():
@@ -62,13 +58,11 @@ def listc(ctx, db):
 
 
 @kmers_group.command(short_help='Create new collection of reference k-mers')
-@click.option('-f', '--format', type=click.Choice(kmer_storage_formats.keys()),
-              default='coords')
 @click.argument('k', type=int)
 @click.argument('prefix', type=str)
 @click.argument('title', type=str)
 @with_db(confirm=True)
-def makec(ctx, db, k, prefix, title, format):
+def makec(ctx, db, k, prefix, title):
 	"""Create a new collection of reference k-mers with given parameters
 
 	Args:
@@ -102,7 +96,7 @@ def makec(ctx, db, k, prefix, title, format):
 
 	# Create it
 	collection = db.create_kmer_collection(k=k, prefix=prefix, title=title,
-	                                       format=format)
+	                                       format='coords')
 
 	click.echo(
 		'K-mer collection "{}" created with ID {}'
@@ -122,6 +116,9 @@ def calc(ctx, db, collection_id):
 	You can get the collection ID by running listc (it will be printed at the
 	beginning of the line).
 	"""
+	import multiprocessing as mp
+	import wgskmers.multiprocess as kmp
+	from wgskmers.database.models import Genome, KmerSet, KmerSetCollection
 
 	# Get collection
 	session = db.get_session()

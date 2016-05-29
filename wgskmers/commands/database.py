@@ -1,12 +1,10 @@
-""""""
+"""Commands for managing registered databases"""
 
 import os
 import string
 
 import click
 
-from wgskmers import database, config
-from wgskmers.database.upgrade import upgrader
 from .util import choose_db_path
 
 
@@ -26,29 +24,32 @@ def database_group():
 @database_group.command()
 def list():
 	"""List registered databases"""
+	from wgskmers.config import get_config
+	from wgskmers import database
 
-	# Get registered databases
-	registered_dbs = database.get_registered_dbs()
+	# Get config databases
+	config = get_config()
+	registered_dbs = config.get_registered_dbs()
+	default_db = config.get_default_db()
 
 	# Get current database
 	current_path, method = database.get_current_db()
 
+	# List default database first, remaining alphabetically
+	databases = registered_dbs.items()
+	if default_db is not None:
+		databases.insert(0, (None, default_db))
+
 	# None found
-	if not registered_dbs:
-		click.secho('No databases are currently registered', fg='red')
+	if not databases:
+		click.echo('No databases are currently registered', err=True)
 		return
 
-	# List default database first, remaining alphabetically
-	names = registered_dbs.keys()
-	if 'default' in registered_dbs:
-		names.remove('default')
-		names.insert(0, 'default')
-
-	for name in names:
-		path = registered_dbs[name]
+	# Print names and paths
+	for name, path in databases:
 
 		# Default with brackets
-		print_name = '[default]' if name == 'default' else name
+		print_name = '[default]' if name is None else name
 
 		# Left-justify
 		print_name = print_name.ljust(20)
@@ -64,7 +65,7 @@ def list():
 			# Check if current
 			if current_path is not None and path == current_path:
 				name_str = click.style(print_name, fg='cyan', bold=True)
-			elif name == 'default':
+			elif name is None:
 				name_str = click.style(print_name, fg='green')
 			else:
 				name_str = print_name
@@ -75,17 +76,19 @@ def list():
 @database_group.command()
 def which():
 	"""Get the currently active database"""
+	from wgskmers import database
+
 	path, method = database.get_current_db()
 
 	if path is not None:
 
-		if os.path.isdir(path):
+		if database.is_db_directory(path):
 			click.echo(path)
 		else:
 			click.secho(path, fg='red')
 
 		if method == 'cwd':
-			click.echo('(Parent of current working directory)')
+			click.echo('(Current working directory)')
 		elif method == 'config':
 			click.echo('(Default database in config file)')
 		elif method == 'environ':
@@ -99,9 +102,8 @@ def which():
 			click.echo('(huh?)')
 
 	else:
-		click.secho('No database currently active (not in a database directory '
-		           'and no default set in config file or environment variable).',
-		           fg='red')
+		click.echo('No database currently active (not in a database directory '
+		           'and no default set in config file or environment variable).')
 
 
 @database_group.command(short_help='Create a new database')
@@ -114,6 +116,10 @@ def init(directory, set_default=False, name=None):
 	Create a new database in the specified directory, or the current one if
 	none specified.
 	"""
+	from wgskmers.config import get_config
+
+	config = get_config()
+
 	if directory is None:
 		directory = os.getcwd()
 	else:
@@ -125,7 +131,7 @@ def init(directory, set_default=False, name=None):
 
 	# Confirm if default exists
 	if set_default:
-		current_default = database.get_default_db()
+		current_default = config.get_default_db()
 		if current_default is not None:
 			click.confirm(
 				'Default database is currently set to {}, overwrite?'
@@ -139,11 +145,11 @@ def init(directory, set_default=False, name=None):
 		check_valid_name(name)
 
 		# Confirm if name exists
-		current_named = database.get_registered_dbs().get(name, None)
+		current_named = config.get_registered_dbs().get(name, None)
 		if current_named is not None:
 			click.confirm(
 				'Database in {} is already registered as {}, overwrite?'
-				.format(name, current_named),
+				.format(current_named, name),
 				abort=True
 			)
 
@@ -152,9 +158,9 @@ def init(directory, set_default=False, name=None):
 
 	# Register
 	if name is not None:
-		database.register_db(directory, name, True)
+		config.register_db(directory, name, True)
 	if set_default:
-		database.register_db(directory, 'default', True)
+		config.set_default_db(directory, True)
 
 	click.echo('Success!')
 
@@ -168,8 +174,11 @@ def set_default(path=None, name=None):
 	of another currently registered database. If no path given, will check if
 	current working directory is within a database.
 	"""
+	from wgskmers.config import get_config
+	from wgskmers import database
 
-	registered_dbs = database.get_registered_dbs()
+	config = get_config()
+	registered_dbs = config.get_registered_dbs()
 
 	# Set from explicit path
 	if path is not None:
@@ -199,8 +208,8 @@ def set_default(path=None, name=None):
 
 
 	# Check if database already exists
-	if 'default' in registered_dbs:
-		current_default = registered_dbs['default']
+	current_default = config.get_default_db()
+	if current_default is not None:
 
 		# Check if it is already the default
 		if current_default == path:
@@ -217,7 +226,7 @@ def set_default(path=None, name=None):
 			)
 
 	# Register it
-	database.register_db(path, 'default', True)
+	config.set_default_db(path, True)
 	click.echo('Default database set to {}'.format(path))
 
 
@@ -229,8 +238,11 @@ def register(name, path=None):
 	Register an existing database in the global configuration file. If no
 	path given, will check if current working directory is within a database.
 	"""
+	from wgskmers.config import get_config
+	from wgskmers import database
 
-	registered_dbs = database.get_registered_dbs()
+	config = get_config()
+	registered_dbs = config.get_registered_dbs()
 
 	# Check name valid
 	name = name.lower()
@@ -276,7 +288,7 @@ def register(name, path=None):
 			)
 
 	# Register it
-	database.register_db(path, name, True)
+	config.register_db(path, name, True)
 	click.echo('Database {} registered as {}'.format(path, name))
 
 
@@ -287,8 +299,10 @@ def unregister(name):
 	Un-register a currently registered database. The database itself is left
 	alone. Type "default" to un-register the default database.
 	"""
+	from wgskmers.config import get_config
 
-	registered_dbs = database.get_registered_dbs()
+	config = get_config()
+	registered_dbs = config.get_registered_dbs()
 
 	if name not in registered_dbs:
 		raise click.ClickException('Database "{}" is not currently registered.'
@@ -304,7 +318,7 @@ def unregister(name):
 		              abort=True)
 
 	# Remove it
-	database.unregister_db(name)
+	config.unregister_db(name)
 	if name =='default':
 		click.echo('Default database removed from config file.')
 	else:
@@ -315,6 +329,8 @@ def unregister(name):
 @choose_db_path()
 def upgrade(db_path):
 	"""Upgrade a database to the latest version"""
+	from wgskmers.database.upgrade import upgrader
+
 	upgrader.upgrade(db_path)
 	click.echo('Success!')
 
@@ -323,4 +339,6 @@ def upgrade(db_path):
 @choose_db_path()
 def version(db_path):
 	"""Get version of existing database"""
+	from wgskmers import database
+
 	click.echo(database.get_db_version(db_path))

@@ -25,16 +25,23 @@ class Genome(Base, TrackChangesMixin):
 
 	id = Column(Integer(), primary_key=True)
 	description = Column(String(), nullable=False, unique=True)
+	organism = Column(String())
+
 	gb_db = Column(String())
 	gb_id = Column(Integer(), unique=True)
 	gb_acc = Column(Integer(), unique=True)
 	gb_summary = Column(MutableJsonDict.as_mutable(JsonType))
 	gb_taxid = Column(Integer())
-	is_assembled = Column(Boolean(), nullable=False)
-	organism = Column(String())
+
+	tax_species = Column(String())
+	tax_genus = Column(String())
+	tax_strain = Column(String())
+
 	filename = Column(String(), nullable=False, unique=True)
 	file_format = Column(String(), nullable=False)
 	compression = Column(CompressionFormat, nullable=True)
+
+	is_assembled = Column(Boolean(), nullable=False)
 	extra = Column(MutableJsonDict.as_mutable(JsonType))
 
 	def __repr__(self):
@@ -43,7 +50,6 @@ class Genome(Base, TrackChangesMixin):
 			self.id,
 			self.description,
 		)
-
 
 
 genome_set_assoc = Table(
