@@ -88,12 +88,9 @@ class QueryMetric(object):
 			out_shape = []
 			if query_multi:
 				out_shape.append(len(q_bounds) - 1)
-			elif refs_multi:
+			if refs_multi:
 				out_shape.append(len(r_bounds) - 1)
 			out = np.empty(out_shape, dtype=self.return_type)
-
-		# import ipdb
-		# ipdb.set_trace()
 
 		# Reshape out into a 2d array for the vectorized function
 		out_reshaped = out.reshape((len(q_bounds) - 1, len(r_bounds) - 1))
