@@ -117,6 +117,7 @@ def init(directory, set_default=False, name=None):
 	none specified.
 	"""
 	from wgskmers.config import get_config
+	from wgskmers.database import Database
 
 	config = get_config()
 
@@ -154,7 +155,7 @@ def init(directory, set_default=False, name=None):
 			)
 
 	# Create database
-	database.Database.create(directory)
+	Database.create(directory)
 
 	# Register
 	if name is not None:
