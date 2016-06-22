@@ -194,4 +194,4 @@ def get_record_url(acc_or_id, db):
 	except KeyError:
 		raise ValueError('Don\'t know how to get url for db {}'.format(db))
 
-	return '/'.join([ncbi_url, str(acc_or_id), db])
+	return '/'.join([ncbi_url, db, str(acc_or_id)])
