@@ -159,6 +159,7 @@ class Database(object):
 
 		# Get function kwargs
 		src_compression = kwargs.pop('src_compression', None)
+		src_mode = kwargs.pop('src_mode', 'b' if src_compression else None)
 		keep_src = kwargs.pop('keep_src', True)
 
 		# Create genome from remaining kwargs
@@ -222,7 +223,12 @@ class Database(object):
 				needs_delete = False
 
 			# Open destination using correct mode and format
-			write_mode = 'wb' if 'b' in src_fh.mode else 'w'
+			if src_mode is not None:
+				write_mode = src_mode
+			elif hasattr(src_fh, 'mode') and 'b' in src_fh.mode:
+				write_mode = 'wb'
+			else:
+				write_mode = 'w'
 
 			if genome.compression is None:
 				dest_fh = open(store_path, write_mode)
