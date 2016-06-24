@@ -157,16 +157,16 @@ class Database(object):
 
 	def store_genome(self, file_, **kwargs):
 
+		session = self._ExpireSession()
+
 		# Get function kwargs
 		src_compression = kwargs.pop('src_compression', None)
-		src_mode = kwargs.pop('src_mode', 'b' if src_compression else None)
+		src_mode = kwargs.pop('src_mode', 'rb' if src_compression else None)
 		keep_src = kwargs.pop('keep_src', True)
 
 		# Create genome from remaining kwargs
 		kwargs.setdefault('compression', 'gzip')
 		genome = Genome(**kwargs)
-
-		session = self._ExpireSession()
 
 		# Determine the file name
 		genome.filename = self._make_genome_file_name(genome, session)
@@ -176,37 +176,57 @@ class Database(object):
 		if os.path.exists(store_path):
 			raise RuntimeError('{} already exists'.format(store_path))
 
-		# See if we are moving/copying a file in the same format
-		same_format = genome.compression = src_compression
-		if isinstance(file_, basestring) and same_format:
+		# Open destination using correct mode and format
+		if src_mode is not None:
+			write_mode = 'wb' if 'b' in src_mode else 'w'
+		elif not isinstance(file_, basestring) and hasattr(src_fh, 'mode') and 'b' in src_fh.mode:
+			write_mode = 'wb'
+		else:
+			write_mode = 'w'
 
-			# Copy it
-			if keep_src:
-				shutil.copyfile(file_, store_path)
+		# Check if source and destination are in the same format
+		same_format = genome.compression == src_compression
+		if same_format:
+
+			# See if we are moving/copying a file in the same format, if so can
+			# just use file system operations
+			if isinstance(file_, basestring):
+
+				# Copy it
+				if keep_src:
+					shutil.copyfile(file_, store_path)
+					src_moved = False
+
+				# Move it
+				else:
+					os.rename(file_, store_path)
+					src_moved = True
+
+			# Copying stream in same format
+			else:
 				src_moved = False
 
-			# Move it
-			else:
-				os.rename(file_, store_path)
-				src_moved = True
+				with open(store_path, write_mode) as dest_fh:
+					shutil.copyfileobj(file_, dest_fh)
 
 			needs_delete = False
 
+		# Different formats
 		else:
 			src_moved = False
 
-			# Copying from file, different formats
+			# Copying from file
 			if isinstance(file_, basestring):
 
 				if src_compression is None:
 					src_fh = open(file_, 'rb')
 
 				elif src_compression == 'gzip':
-					src_fh = gzip.open(file_, 'rb')
+					src_fh = gzip.open(file_, src_mode)
 
 				else:
 					raise ValueError(
-						'Don\'t know how to open files with compression "{}"'
+						'Unknown compression format "{}"'
 						.format(src_compression)
 					)
 
@@ -217,19 +237,18 @@ class Database(object):
 				if src_compression is None:
 					src_fh = file_
 
+				elif src_compression == 'gzip':
+					src_fh = gzip.GzipFile(fileobj=file_, mode=src_mode)
+
 				else:
-					raise ValueError('Can\'t add from compressed file object')
+					raise ValueError(
+						'Unknown compression format "{}"'
+						.format(src_compression)
+					)
 
 				needs_delete = False
 
-			# Open destination using correct mode and format
-			if src_mode is not None:
-				write_mode = src_mode
-			elif hasattr(src_fh, 'mode') and 'b' in src_fh.mode:
-				write_mode = 'wb'
-			else:
-				write_mode = 'w'
-
+			# Open destinaction file
 			if genome.compression is None:
 				dest_fh = open(store_path, write_mode)
 
@@ -238,7 +257,7 @@ class Database(object):
 
 			else:
 				raise ValueError(
-					'Don\'t know how to store files with compression "{}"'
+						'Unknown compression format "{}"'
 					.format(genome.compression)
 				)
 
@@ -250,7 +269,6 @@ class Database(object):
 		try:
 			session.add(genome)
 			session.commit()
-			session.close()
 
 		# Try to reverse file operations on error
 		except Exception:
@@ -263,6 +281,10 @@ class Database(object):
 
 			# Propagate exception
 			raise
+
+		finally:
+			# Always close session
+			session.close()
 
 		# Remove the original if needed
 		if needs_delete:
@@ -398,7 +420,6 @@ class Database(object):
 		filename = base + ext
 		i = 0
 
-		session = self.get_session()
 		q = session.query(Genome)
 		while q.filter_by(filename=filename).first() is not None:
 			i += 1
