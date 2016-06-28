@@ -25,7 +25,7 @@ class RefCalculator(object):
 			records = SeqIO.parse(fh, genome.file_format)
 
 			# If assembled, get boolean vector. Otherwise get counts (why not)
-			return vec_from_records(records, counts=not genome.is_assembled)
+			return vec_from_records(records, cls.spec, counts=not genome.is_assembled)
 
 
 @click.group(name='refs',
@@ -70,6 +70,9 @@ def makec(ctx, db, k, prefix, title):
 		[PREFIX]: Nucleotide sequence that k-mers must start with
 		[TITLE]: Unique title for k-mer collection
 	"""
+	from wgskmers.kmers import nucleotides
+	from wgskmers.database.models import KmerSetCollection
+
 	# Check k
 	if k <= 0:
 		raise click.ClickException('K must be positive')
@@ -117,6 +120,8 @@ def calc(ctx, db, collection_id):
 	beginning of the line).
 	"""
 	import multiprocessing as mp
+
+	from wgskmers.kmers import KmerSpec
 	import wgskmers.multiprocess as kmp
 	from wgskmers.database.models import Genome, KmerSet, KmerSetCollection
 
@@ -146,29 +151,35 @@ def calc(ctx, db, collection_id):
 
 	kmp.enable_method_pickling()
 
-	# Start the workers
-	results = pool.imap(RefCalculator.calc_ref, genomes)
+	try:
 
-	# Iterate through results
-	added, errors = 0, 0
-	for vec, genome in tqdm(izip(results, genomes), total=len(genomes)):
+		# Start the workers
+		results = pool.imap(RefCalculator.calc_ref, genomes)
+		pool.close()
 
-		# Try adding the set
-		try:
-			store_set(vec, genome, has_counts=not genome.is_assembled)
-			added += 1
+		# Iterate through results
+		added, errors = 0, 0
+		for vec, genome in tqdm(izip(results, genomes), total=len(genomes)):
 
-		# Print exception and continue
-		except Exception as e:
-			click.secho(
-				'Error finding k-mers for genome "{}": {}'
-				.format(genome.description, e),
-				err=True, fg='red'
-			)
-			errors += 1
+			# Try adding the set
+			try:
+				store_set(vec, genome, has_counts=not genome.is_assembled)
+				added += 1
 
-	skipped = session.query(Genome).count() - added - errors
-	click.echo(
-		'Calculated {} sets, {} errors, {} already in collection'
-		.format(added, errors, skipped)
-	)
+			# Print exception and continue
+			except Exception as e:
+				click.secho(
+					'Error finding k-mers for genome "{}": {}'
+					.format(genome.description, e),
+					err=True, fg='red'
+				)
+				errors += 1
+
+		skipped = session.query(Genome).count() - added - errors
+		click.echo(
+			'Calculated {} sets, {} errors, {} already in collection'
+			.format(added, errors, skipped)
+		)
+
+	finally:
+		pool.terminate()

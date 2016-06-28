@@ -65,7 +65,7 @@ class MutableJsonCollection(Mutable):
 		"""For pickling"""
 		return self.as_builtin()
 
-	def __setstate__(state):
+	def __setstate__(self, state):
 		"""For unpickling"""
 		self.__init__(state)
 

@@ -147,7 +147,7 @@ class Database(object):
 		"""For pickling"""
 		return self.directory
 
-	def __setstate__(directory):
+	def __setstate__(self, directory):
 		"""For unpickling"""
 		self.__init__(directory)
 
@@ -300,9 +300,13 @@ class Database(object):
 			os.unlink(genome_path)
 
 		session = self._Session()
-		session.delete(session.merge(genome))
-		session.commit()
-		session.close()
+
+		try:
+			session.delete(session.merge(genome))
+			session.commit()
+
+		finally:
+			session.close()
 
 	def open_genome(self, genome):
 		path = self._get_path('genomes', genome.filename)
@@ -458,7 +462,7 @@ class KmerSetLoader(object):
 		"""For pickling"""
 		return (self.db, self.collection)
 
-	def __setstate__(state):
+	def __setstate__(self, state):
 		"""For unpickling"""
 		self.__init__(*state)
 
@@ -555,11 +559,13 @@ class KmerSetAdder(object):
 			session = self.db._ExpireSession()
 			session.add(kmer_set)
 			session.commit()
-			session.close()
 
 		# On error, remove the file
 		except Exception as e:
 			os.unlink(store_path)
 			raise
+
+		finally:
+			session.close()
 
 		return kmer_set
