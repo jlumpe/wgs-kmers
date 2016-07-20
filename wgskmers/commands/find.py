@@ -2,6 +2,9 @@
 
 By default, the script will output a sorted list of all k-mers found.
 """
+from future import standard_library
+standard_library.install_aliases()
+from builtins import zip
 
 import os
 import sys
@@ -93,7 +96,7 @@ def write_kmer_counts(stream, finders):
 	kmer_counts = Counter(k for f in finders for k in f.get_kmers())
 
 	# Sort k-mers by count
-	kmers_sorted = sorted(kmer_counts.items(), key=lambda i: i[1],
+	kmers_sorted = sorted(list(kmer_counts.items()), key=lambda i: i[1],
 	                      reverse=True)
 
 	# Write
@@ -346,7 +349,7 @@ def find_command(src, dest, prefix, k, **kwargs):
 
 		# Output stream - file (text/binary) or StringIO
 		if dest_path is None:
-			from cStringIO import StringIO
+			from io import StringIO
 			out_stream = StringIO()
 		elif output_format == 'bool':
 			out_stream = open(dest_path, 'wb')

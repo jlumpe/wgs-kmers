@@ -1,4 +1,5 @@
 """Storage formats for kmer sets"""
+from builtins import object
 
 import numpy as np
 

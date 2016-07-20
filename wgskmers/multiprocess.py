@@ -1,9 +1,12 @@
 """Utility functions and classes for multiprocessing"""
+from future import standard_library
+standard_library.install_aliases()
+from builtins import object
 
 import sys
 import traceback
 import multiprocessing as mp
-import copy_reg
+import copyreg
 import types
 import ctypes
 
@@ -13,9 +16,9 @@ from wgskmers.kmers import KmerSpec, KmerCoordsCollection
 
 
 def _pickle_method(method):
-	func_name = method.im_func.func_name
-	obj = method.im_self
-	cls = method.im_class
+	func_name = method.__func__.__name__
+	obj = method.__self__
+	cls = method.__self__.__class__
 
 	if func_name.startswith('__') and not func_name.endswith('__'):
 		cls_name = cls.__name__.lstrip('_')
@@ -38,7 +41,7 @@ def _unpickle_method(func_name, obj, cls):
 
 def enable_method_pickling():
 	"""Needed to map instance/class methods with process pools"""
-	copy_reg.pickle(types.MethodType, _pickle_method, _unpickle_method)
+	copyreg.pickle(types.MethodType, _pickle_method, _unpickle_method)
 
 
 class SharedNumpyArray(object):

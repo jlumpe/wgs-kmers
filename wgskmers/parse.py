@@ -1,4 +1,6 @@
 """Functions for parsing sequence files into k-mer sets"""
+from past.builtins import basestring
+from builtins import object
 
 import os
 import gzip

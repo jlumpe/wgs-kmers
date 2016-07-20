@@ -1,4 +1,7 @@
 """SQLAlchemy custom types, utility stuff"""
+from builtins import map
+from past.builtins import basestring
+from builtins import object
 
 import datetime
 import json
@@ -44,7 +47,7 @@ class TrackChangesMixin(object):
 
 
 # Python types corresponding to non-collection types storable in JSON
-jsonable_scalars = (int, long, float, basestring, bool, type(None))
+jsonable_scalars = (int, float, basestring, bool, type(None))
 
 
 class MutableJsonCollection(Mutable):
@@ -123,7 +126,7 @@ class MutableJsonList(MutableJsonCollection, collections.MutableSequence):
 
 	def __init__(self, sequence, parent=None):
 		# Recursively convert any nested collections to MutableJsonCollection
-		self._list = map(self._transform_element, sequence)
+		self._list = list(map(self._transform_element, sequence))
 
 		MutableJsonCollection.__init__(self, parent)
 
@@ -152,7 +155,7 @@ class MutableJsonList(MutableJsonCollection, collections.MutableSequence):
 		self.changed()
 
 	def as_builtin(self):
-		return map(self._element_as_builtin, self._list)
+		return list(map(self._element_as_builtin, self._list))
 
 	@classmethod
 	def coerce(cls, key, value):
@@ -174,7 +177,7 @@ class MutableJsonDict(MutableJsonCollection, collections.MutableMapping):
 	def __init__(self, mapping, parent=None):
 		# Recursively convert any nested collections to MutableJsonCollection
 		self._dict = {k: self._transform_element(v) for k, v
-		              in dict(mapping).iteritems()}
+		              in dict(mapping).items()}
 
 		MutableJsonCollection.__init__(self, parent)
 
@@ -203,7 +206,7 @@ class MutableJsonDict(MutableJsonCollection, collections.MutableMapping):
 
 	def as_builtin(self):
 		return {k: self._element_as_builtin(v) for k, v
-		        in self._dict.iteritems()}
+		        in self._dict.items()}
 
 	@classmethod
 	def coerce(cls, key, value):

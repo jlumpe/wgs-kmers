@@ -1,6 +1,10 @@
+from future import standard_library
+standard_library.install_aliases()
+from past.builtins import basestring
+from builtins import object
 import os
 import json
-from ConfigParser import RawConfigParser
+from configparser import RawConfigParser
 
 from appdirs import AppDirs
 
@@ -52,7 +56,7 @@ class SystemConfig(object):
 				with open(self._path_for('databases')) as fh:
 					self._db_conf = json.load(fh)
 
-			except IOError, ValueError:
+			except (IOError, ValueError):
 				self._db_conf = dict()
 
 		return self._db_conf

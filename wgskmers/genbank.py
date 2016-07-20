@@ -1,11 +1,16 @@
 """Functions for querying Genbank/Entrez and dealing with file formats"""
+from future import standard_library
+standard_library.install_aliases()
+from builtins import map
+from builtins import str
+from builtins import object
 
 import os
 from glob import glob
 import re
 import json
 from xml.etree.cElementTree import parse as parse_xml
-from cStringIO import StringIO
+from io import StringIO
 
 from Bio import Entrez
 
@@ -116,7 +121,7 @@ def ids_for_accession(acc, db, field=None):
 		term = acc
 
 	result = ezutils('esearch', db=db, retmode='json', term=term)
-	return map(int, result['esearchresult']['idlist'])
+	return list(map(int, result['esearchresult']['idlist']))
 
 
 def get_summary(id, db):

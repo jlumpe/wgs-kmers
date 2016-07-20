@@ -1,4 +1,5 @@
 """Command line tools for development"""
+from __future__ import print_function
 
 import os
 from functools import wraps
@@ -127,7 +128,7 @@ def diff(ctx, db):
 	mc = MigrationContext.configure(engine.connect())
 	diff = compare_metadata(mc, Base.metadata)
 
-	print pprint(diff)
+	print(pprint(diff))
 
 
 @alembic_group.command()

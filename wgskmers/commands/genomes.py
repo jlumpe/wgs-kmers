@@ -1,4 +1,5 @@
 """Commands for managing stored reference genomes"""
+from builtins import str
 
 import os
 import re
@@ -104,12 +105,12 @@ genome_import_attrs = OrderedDict([
 reqd_genome_import_attrs = ['description', 'is_assembled', 'file_format']
 uq_genome_import_attrs = ['description', 'gb_id', 'gb_acc']
 
-genome_show_attrs = ['id'] + genome_import_attrs.keys() + [
+genome_show_attrs = ['id'] + list(genome_import_attrs.keys()) + [
 	'created_at',
 	'updated_at',
 ]
 
-genome_import_cols = genome_import_attrs.keys()
+genome_import_cols = list(genome_import_attrs.keys())
 genome_import_cols.append('file')
 genome_import_cols.append('compression')
 
@@ -158,7 +159,7 @@ def parse_import_csv(fh, db):
 
 		# Get attributes from row
 		attrs = dict()
-		for attrname, converter in genome_import_attrs.iteritems():
+		for attrname, converter in genome_import_attrs.items():
 			val = row[attrname].strip()
 
 			# Empty string is None

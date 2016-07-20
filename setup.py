@@ -17,6 +17,7 @@ setup(
 		'tqdm >= 3.4.0',
 		'appdirs >= 1.4.0',
 		'alembic >=  0.8.5',
+		'future >= 0.15',
 	],
 	entry_points={
 		'console_scripts': [

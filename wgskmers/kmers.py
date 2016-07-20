@@ -7,6 +7,10 @@ lexicographical ordering (nucleotides are ordered alphabetically).
 Note that these functions are case-sensitive and expect sequence strings to
 be upper case.
 """
+from builtins import str
+from builtins import map
+from builtins import range
+from builtins import object
 
 import collections
 
@@ -399,7 +403,7 @@ class KmerCoordsCollection(collections.Sequence):
 
 	@classmethod
 	def from_coords_seq(cls, coord_seq):
-		coords_col = cls.empty(map(len, coord_seq))
+		coords_col = cls.empty(list(map(len, coord_seq)))
 
 		for i, coords in enumerate(coord_seq):
 			coords_col[i] = coords

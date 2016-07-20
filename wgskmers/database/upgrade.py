@@ -1,4 +1,6 @@
 """Functions for performing database upgrades"""
+from builtins import range
+from builtins import object
 
 import os
 

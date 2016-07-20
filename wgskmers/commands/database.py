@@ -36,7 +36,7 @@ def list():
 	current_path, method = database.get_current_db()
 
 	# List default database first, remaining alphabetically
-	databases = registered_dbs.items()
+	databases = list(registered_dbs.items())
 	if default_db is not None:
 		databases.insert(0, (None, default_db))
 

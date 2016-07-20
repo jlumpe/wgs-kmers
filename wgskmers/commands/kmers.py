@@ -1,6 +1,7 @@
 """Commands for managed stored k-mer sets"""
+from builtins import object
 
-from itertools import izip
+
 
 import click
 from tqdm import tqdm
@@ -159,7 +160,7 @@ def calc(ctx, db, collection_id):
 
 		# Iterate through results
 		added, errors = 0, 0
-		for vec, genome in tqdm(izip(results, genomes), total=len(genomes)):
+		for vec, genome in tqdm(zip(results, genomes), total=len(genomes)):
 
 			# Try adding the set
 			try:
